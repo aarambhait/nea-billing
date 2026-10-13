@@ -249,7 +249,7 @@ node tests.mjs
 npm run test:live < local-request.json
 ```
 
-There are seventeen portable tests, including monthly-consumption coverage and the distinction between missing values and actual zero consumption. Live upstream statements were also checked during development. The ZIP does not include the downloaded statements used by those original optional fixture tests. The test:live script accepts an authorized connection request on stdin, fetches its own response and reports parsed record counts and totals. A failing historical assertion can mean NEA changed its records, so investigate rather than hardcoding the expected amounts into the importer.
+There are eighteen portable tests, including monthly-consumption coverage and the distinction between missing values and actual zero consumption. Live upstream statements were also checked during development. The ZIP does not include the downloaded statements used by those original optional fixture tests. The test:live script accepts an authorized connection request on stdin, fetches its own response and reports parsed record counts and totals. A failing historical assertion can mean NEA changed its records, so investigate rather than hardcoding the expected amounts into the importer.
 
 Before releasing in your project:
 
@@ -297,6 +297,8 @@ The production Worker receives a native `API_RATE_LIMITER` binding through wrang
 
 The Cloudflare namespace ID is an account-unique, user-defined positive integer; the repository uses 847291. No D1, KV, R2 or API-key database is needed. Detailed usage, response fields and error codes are in the root [API.md](../API.md) and the live docs page. No customer statements are persisted or cached. CORS enables public browser clients; it is not proof that a caller owns a supplied account.
 
+The canonical NEA hostname is neabilling.com; the verified www alias is retried only for transient network/server failures within the same 25-second deadline. The production Worker enables public fetch routing. Access-denial responses are never retried against aliases.
+
 The following appendix includes all supplied source files, so this Markdown guide is independently usable even without extracting the ZIP.
 
 ## Source: package.json
@@ -322,7 +324,7 @@ The following appendix includes all supplied source files, so this Markdown guid
 
 ```javascript
 import {analyze} from './statement.mjs';
-export const SOURCE = 'https://www.neabilling.com/viewonline/';
+export const SOURCE = 'https://neabilling.com/viewonline/';
 export function clean(value) {
  return value.replace(/<[^>]*>/g,' ').replace(/&nbsp;|&#160;/gi,' ').replace(/&amp;/gi,'&').replace(/&lt;/gi,'<').replace(/&gt;/gi,'>').replace(/&quot;/gi,'"').replace(/&#(\d+);/g,(_,n)=>String.fromCharCode(+n)).replace(/\s+/g,' ').trim();
 }
@@ -368,11 +370,27 @@ export function validate(body) {
 }
 const format=d=>d.slice(5,7)+'/'+d.slice(8,10)+'/'+d.slice(0,4);
 export async function upstream(url,options={}) {
- const response=await fetch(url,{...options,signal:AbortSignal.timeout(25000)});
- if(!response.ok) throw new Error('NEA service returned HTTP '+response.status+'. Please try again later.');
- const text=await response.text();
- if(text.length>3000000) throw new Error('NEA returned an unexpectedly large response. Choose a shorter range.');
- return text;
+ const signal=AbortSignal.timeout(25000);
+ const parsed=new URL(url);
+ const candidates=[url];
+ // Both HTTPS aliases serve NEA's verified public form. Never retry access denials.
+ if(parsed.hostname==='neabilling.com'){const alternate=new URL(parsed);alternate.hostname='www.neabilling.com';candidates.push(alternate.href);}
+ const transient=new Set([500,502,503,504,520,521,522,523,524]);
+ let lastError;
+ for(let i=0;i<candidates.length;i++){
+  let response;
+  try{response=await fetch(candidates[i],{...options,signal});}
+  catch(error){lastError=error;if(signal.aborted||i===candidates.length-1)throw error;continue;}
+  if(!response.ok){
+   lastError=new Error('NEA service returned HTTP '+response.status+'. Please try again later.');
+   if(transient.has(response.status)&&i<candidates.length-1){await response.body?.cancel();continue;}
+   throw lastError;
+  }
+  const text=await response.text();
+  if(text.length>3000000)throw new Error('NEA returned an unexpectedly large response. Choose a shorter range.');
+  return text;
+ }
+ throw lastError;
 }
 export async function lookup(input) {
  const body=new URLSearchParams({NEA_location:input.branch,sc_no:input.scNo,consumer_id:input.consumerId,Fromdatepicker:format(input.from),Todatepicker:format(input.to)});
@@ -1429,4 +1447,5 @@ test('Public rate limits stop upstream requests; aliases share the same client k
 test('Documentation, health and OpenAPI work without NEA or rate-limit capacity',async()=>{const env={REQUIRE_API_RATE_LIMIT:'true',API_RATE_LIMITER:{limit:async()=>{throw Error('should not be called')}}};const health=await api(new Request('https://example.com/api/v1/health'),env);assert.equal(health.status,200);const spec=await api(new Request('https://example.com/api/v1/openapi.json'),env);const j=await spec.json();assert.equal(j.openapi,'3.1.0');assert.ok(j.paths['/api/v1/readings'].post);assert.deepEqual(j.security,[]);const docs=await api(new Request('https://example.com/api/docs'),env);assert.equal(docs.status,200);assert.match(docs.headers.get('Content-Type'),/text\/html/)});
 test('Public lookup verifies account and returns consumption with CORS using NEA HTML',async()=>{const original=globalThis.fetch;let upstreamCalls=0;globalThis.fetch=async(url,options)=>{upstreamCalls++;assert.match(String(url),/viewonline\/viewonlineresult\/$/);assert.equal(options.body.get('consumer_id'),input.consumerId);return new Response(fixture)};try{const r=await api(new Request('https://example.com/api/v1/readings',{method:'POST',headers:{'Content-Type':'application/json',Origin:'https://another-app.test'},body:JSON.stringify(input)}),{API_RATE_LIMITER:{limit:async()=>({success:true})}});assert.equal(r.status,200);assert.equal(r.headers.get('Cache-Control'),'no-store');assert.equal(r.headers.get('Access-Control-Allow-Origin'),'*');const j=await r.json();assert.equal(j.apiVersion,'1');assert.equal(j.summary.consumption.totalReportedUnits,11282);assert.equal(j.account.consumerId,input.consumerId);assert.equal(upstreamCalls,1)}finally{globalThis.fetch=original}});
 test('Public upstream failures return CORS-enabled 502 without claiming success',async()=>{const original=globalThis.fetch;globalThis.fetch=async()=>new Response('unavailable',{status:503});try{const r=await api(new Request('https://example.com/api/v1/readings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(input)}));assert.equal(r.status,502);assert.equal(r.headers.get('Access-Control-Allow-Origin'),'*');assert.equal((await r.json()).code,'NEA_LOOKUP_FAILED')}finally{globalThis.fetch=original}});
+test('Upstream tries the verified HTTPS alias for 522 using one shared deadline, but never retries access denials',async()=>{const original=globalThis.fetch;const calls=[];globalThis.fetch=async(url,options)=>{calls.push({url:String(url),signal:options.signal});return calls.length===1?new Response('timeout',{status:522}):new Response('NEA form')};try{const {upstream,SOURCE}=await import('./adapter.mjs');assert.equal(await upstream(SOURCE),'NEA form');assert.equal(calls[0].url,'https://neabilling.com/viewonline/');assert.equal(calls[1].url,'https://www.neabilling.com/viewonline/');assert.equal(calls[0].signal,calls[1].signal);let deniedCalls=0;globalThis.fetch=async()=>{deniedCalls++;return new Response('denied',{status:403})};await assert.rejects(upstream(SOURCE),/HTTP 403/);assert.equal(deniedCalls,1)}finally{globalThis.fetch=original}});
 ```

@@ -79,6 +79,8 @@ The Worker serves `/` and `/api/*`. It uses HTTP requests to NEA; it needs no D1
 
 `workers_dev: true` enables a public Workers URL after deployment. This standalone demo has no user login. The versioned `/api/v1/*` endpoints are deliberately open to everyone with CORS enabled and no API keys. [Public API usage and limits](API.md).
 
+The Worker uses the `global_fetch_strictly_public` compatibility flag for explicit public-origin fetching. Upstream timeout/server failures can retry NEA's verified HTTPS alias once within the same request deadline.
+
 ## Troubleshooting
 
 - **Worker name mismatch:** use `nea-billing` in Cloudflare and the config.

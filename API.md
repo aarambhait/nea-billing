@@ -92,6 +92,10 @@ The config uses rate-limiter namespace 847291, which is a user-defined positive 
 
 No D1, KV or R2 bindings or API credentials are needed. Native Workers Builds continues deploying pushes to main.
 
+## Upstream connectivity
+
+The canonical source is `https://neabilling.com/viewonline/`. Both that HTTPS host and `www.neabilling.com` were verified to serve the public NEA form. A transient server/network failure can retry once against the verified www alias within the same 25-second deadline. Access-denial responses are not retried. Cloudflare public-fetch routing is enabled through `global_fetch_strictly_public`. If NEA remains unreachable, the API returns a structured 502 and does not fabricate statement data.
+
 ## Compatibility and upstream dependency
 
 `/api/branches` and `/api/readings` still serve the app. The latter retains its existing same-origin browser policy. Public consumers should use `/api/v1/*`.

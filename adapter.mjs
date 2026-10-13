@@ -1,5 +1,5 @@
 import {analyze} from './statement.mjs';
-export const SOURCE = 'https://www.neabilling.com/viewonline/';
+export const SOURCE = 'https://neabilling.com/viewonline/';
 export function clean(value) {
  return value.replace(/<[^>]*>/g,' ').replace(/&nbsp;|&#160;/gi,' ').replace(/&amp;/gi,'&').replace(/&lt;/gi,'<').replace(/&gt;/gi,'>').replace(/&quot;/gi,'"').replace(/&#(\d+);/g,(_,n)=>String.fromCharCode(+n)).replace(/\s+/g,' ').trim();
 }
@@ -45,11 +45,27 @@ export function validate(body) {
 }
 const format=d=>d.slice(5,7)+'/'+d.slice(8,10)+'/'+d.slice(0,4);
 export async function upstream(url,options={}) {
- const response=await fetch(url,{...options,signal:AbortSignal.timeout(25000)});
- if(!response.ok) throw new Error('NEA service returned HTTP '+response.status+'. Please try again later.');
- const text=await response.text();
- if(text.length>3000000) throw new Error('NEA returned an unexpectedly large response. Choose a shorter range.');
- return text;
+ const signal=AbortSignal.timeout(25000);
+ const parsed=new URL(url);
+ const candidates=[url];
+ // Both HTTPS aliases serve NEA's verified public form. Never retry access denials.
+ if(parsed.hostname==='neabilling.com'){const alternate=new URL(parsed);alternate.hostname='www.neabilling.com';candidates.push(alternate.href);}
+ const transient=new Set([500,502,503,504,520,521,522,523,524]);
+ let lastError;
+ for(let i=0;i<candidates.length;i++){
+  let response;
+  try{response=await fetch(candidates[i],{...options,signal});}
+  catch(error){lastError=error;if(signal.aborted||i===candidates.length-1)throw error;continue;}
+  if(!response.ok){
+   lastError=new Error('NEA service returned HTTP '+response.status+'. Please try again later.');
+   if(transient.has(response.status)&&i<candidates.length-1){await response.body?.cancel();continue;}
+   throw lastError;
+  }
+  const text=await response.text();
+  if(text.length>3000000)throw new Error('NEA returned an unexpectedly large response. Choose a shorter range.');
+  return text;
+ }
+ throw lastError;
 }
 export async function lookup(input) {
  const body=new URLSearchParams({NEA_location:input.branch,sc_no:input.scNo,consumer_id:input.consumerId,Fromdatepicker:format(input.from),Todatepicker:format(input.to)});

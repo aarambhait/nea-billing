@@ -22,5 +22,8 @@
       "pattern": "nea.saadhan.app",
       "custom_domain": true
     }
+  ],
+  "compatibility_flags": [
+    "global_fetch_strictly_public"
   ]
 }
