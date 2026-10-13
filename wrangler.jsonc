@@ -16,5 +16,11 @@
   ],
   "vars": {
     "REQUIRE_API_RATE_LIMIT": "true"
-  }
+  },
+  "routes": [
+    {
+      "pattern": "nea.saadhan.app",
+      "custom_domain": true
+    }
+  ]
 }

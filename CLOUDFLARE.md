@@ -2,6 +2,10 @@
 
 This project is configured as a **Cloudflare Worker**. The build embeds the frontend and API in `dist/server/index.js`. Do not configure it as a static Pages site: the NEA lookup needs server-side requests.
 
+## Custom domain
+
+The canonical app/API domain is `https://nea.saadhan.app`. The custom domain route is declared in `wrangler.jsonc` so Git deployments preserve it. The Cloudflare build token needs Workers Routes edit access to the `saadhan.app` zone. The existing workers.dev address remains available as an alternate origin.
+
 ## One-time connection
 
 The repository configuration is ready. A Cloudflare account owner must connect the GitHub repository to activate Workers Builds. Committing `wrangler.jsonc` alone does not create a Cloudflare project or Git connection.
