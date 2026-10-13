@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.openai/
+*.tar.gz
+.env
+.env.*
+local-request.json
+nea-statement.html

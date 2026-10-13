@@ -1,0 +1,14 @@
+{
+  "name": "nea-integration-kit",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests.mjs",
+    "start": "node examples/node/server.mjs",
+    "test:live": "node scripts/live-check.mjs",
+    "start:express": "node examples/express/server.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

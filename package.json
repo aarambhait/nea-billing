@@ -1,0 +1,1 @@
+{"name":"nea-meter-readings","private":true,"type":"module","scripts":{"start":"node server.mjs","test":"node --test tests.mjs","build":"node build.mjs"}}
