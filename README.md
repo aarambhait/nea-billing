@@ -17,7 +17,7 @@ npm test
 npm run build
 ```
 
-The build produces a dependency-free Cloudflare Worker at `dist/server/index.js`, with the UI embedded. Cloudflare deployment configuration is included in `wrangler.jsonc`. [Connect this repository once to enable automatic deployments](CLOUDFLARE.md). Private ChatGPT Site identity and credentials are not included.
+The build writes the Worker entry `dist/server/index.js` plus its ES modules, with the UI embedded; Wrangler bundles them on deploy. `npm run check` also smoke-tests the built Worker. Cloudflare deployment configuration is included in `wrangler.jsonc`. [Connect this repository once to enable automatic deployments](CLOUDFLARE.md). Private ChatGPT Site identity and credentials are not included.
 
 For Node 24+ in a proxy-only environment, use `NODE_USE_ENV_PROXY=1 npm start` when required by your infrastructure.
 
@@ -38,6 +38,8 @@ cd integration-kit
 npm start
 node tests.mjs
 ```
+
+The root modules are the source of truth. After changing `adapter.mjs`, `statement.mjs`, `api.mjs`, `openapi.mjs`, `documentation.mjs`, `tests.mjs` or `index.html`, run `npm run sync` to update the kit copies, the kit README's source appendix and the ZIP. `npm run check` fails if they drift.
 
 Copy `adapter.mjs`, `statement.mjs`, `api.mjs`, `openapi.mjs` and `documentation.mjs` into your other project's backend. The guide documents NEA's exact form request, HTML column mapping, JSON schema, grouping logic, error handling, snapshot imports and project-specific access integration.
 
