@@ -52,3 +52,27 @@ export function analyze(records,sourceTotals,scNo,groups=[]) {
  const middle=scNo.match(/^\d+[.\/-](\d{1,2})[.\/-]/)?.[1];const scheduledReadingDay=middle&&Number(middle)>=1&&Number(middle)<=32?Number(middle):null;
  return {months,consumption,totals,sourceTotals,statementGroups,balanceRecords:records.filter(r=>r.kind==='balance'),paidDifference,sourceTotalMismatches:mismatches,unallocatedCharges:extras.filter(x=>!assigned.has(rowId(x))),scheduledReadingDay};
 }
+
+// Storage-ready contract for trusted CSMS callers. All NEA interpretation stays here.
+export function importBills(statement) {
+ const {account, records, summary}=statement;
+ if(!summary.sourceTotals || !['billAmount','payableAmount'].every(field=>Number.isFinite(summary.sourceTotals[field])) || summary.sourceTotalMismatches.length || summary.unallocatedCharges.length)
+  throw new Error('NEA statement cannot be reconciled or contains unallocated charges; no bills were imported.');
+ const aliases=[['baishakh','baisakh'],['jestha','jyeshtha'],['ashadh','ashad','asar','asadh'],['shrawan','shravan','sawan'],['bhadra','bhadau'],['ashwin','aswin'],['kartik','karthik'],['mangsir','mangshir'],['poush','paush'],['magh'],['falgun','phalgun'],['chaitra','chait']];
+ const ids=new Set();
+ for(const record of records){const id=rowId(record);if(ids.has(id))throw new Error('Duplicate NEA statement row.');ids.add(id);}
+ const periods=new Set();
+ const bills=summary.months.map(month=>{
+  const match=month.period?.match(/^([A-Za-z]+)\/([0-9]{4})$/);
+  const index=match?aliases.findIndex(names=>names.includes(match[1].toLowerCase())):-1;
+  if(index<0)throw new Error('Unknown Nepali bill period.');
+  const period=match[2]+'-'+String(index+1).padStart(2,'0');
+  if(periods.has(period))throw new Error('Multiple bill rows for one month cannot be imported safely.');
+  periods.add(period);
+  const rows=records.filter(r=>(r.statementGroup??null)===month.statementGroup && month.sourceSequences.includes(r.sequence));
+  const billed=sumMoney(rows.map(r=>r.billAmount));
+  if(!month.billDateISO || !Number.isFinite(billed) || !Number.isFinite(month.totalPayable) || (month.consumedUnits!==null && (!Number.isFinite(month.consumedUnits)||month.consumedUnits<0)))throw new Error('Invalid monthly bill values.');
+  return {bill_period:period,bill_date:month.billDateISO,billed_amount:billed,total_amount:month.totalPayable,net_payable:month.totalPayable,vat_amount:month.vatAmount,consumption_kwh:month.consumedUnits,payment_status:month.status?.toUpperCase()||null,due_date:null,meter_previous:null,meter_current:null,details:{statement_rows:rows,receipts:month.receiptSequence===null?[]:records.filter(r=>(r.statementGroup??null)===month.statementGroup&&r.sequence===month.receiptSequence),requested_range:statement.range,fetched_at:statement.fetchedAt,account,association:month.association}};
+ });
+ return {contractVersion:1,account,bills};
+}

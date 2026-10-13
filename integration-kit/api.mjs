@@ -1,10 +1,11 @@
 import {SOURCE,branches,upstream,lookup,validate} from './adapter.mjs';
+import {importBills} from './statement.mjs';
 import {apiSpecification} from './openapi.mjs';
 import {API_DOCS_HTML} from './documentation.mjs';
 
 const API_PREFIX='/api/v1/';
 const MAX_BODY_BYTES=4096;
-const PUBLIC_CORS={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':'GET, POST, OPTIONS','Access-Control-Allow-Headers':'Content-Type','Access-Control-Expose-Headers':'Retry-After, X-Request-ID','Access-Control-Max-Age':'86400'};
+const PUBLIC_CORS={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':'GET, POST, OPTIONS','Access-Control-Allow-Headers':'Content-Type, Authorization','Access-Control-Expose-Headers':'Retry-After, X-Request-ID','Access-Control-Max-Age':'86400'};
 class InputError extends Error {constructor(message,status=400,code='INVALID_REQUEST'){super(message);this.status=status;this.code=code;}}
 async function requestJson(request){
  if(Number(request.headers.get('content-length'))>MAX_BODY_BYTES)throw new InputError('Request too large.',413,'REQUEST_TOO_LARGE');
@@ -37,8 +38,11 @@ export async function api(request,env={}){
   if(path==='/api/v1/health')return json({status:'ok',apiVersion:'1',requestId,upstream:'NEA is checked only when a lookup is requested.'});
  }
  const branchRoute=path==='/api/branches'||path==='/api/v1/branches';
- const readingRoute=path==='/api/readings'||path==='/api/v1/readings';
+ const importRoute=path==='/api/import-bills';
+ const readingRoute=importRoute||path==='/api/readings'||path==='/api/v1/readings';
  if(!(branchRoute&&request.method==='GET')&&!(readingRoute&&request.method==='POST'))return fail('Unknown endpoint or unsupported method.',404,'NOT_FOUND');
+ if(!env.NEA_ADAPTER_TOKEN?.trim())return fail('Adapter authentication is not configured.',503,'AUTH_NOT_CONFIGURED');
+ if(request.headers.get('Authorization')!==`Bearer ${env.NEA_ADAPTER_TOKEN}`)return fail('Authentication required.',401,'UNAUTHORIZED');
  if(!isPublic&&readingRoute){const origin=request.headers.get('Origin');if(origin&&origin!==new URL(request.url).origin)return fail('Cross-origin requests are not allowed.',403,'FORBIDDEN');}
  if(isPublic&&readingRoute&&request.headers.get('content-type')?.split(';')[0].trim().toLowerCase()!=='application/json')return fail('Use Content-Type: application/json.',415,'UNSUPPORTED_MEDIA_TYPE');
  try {
@@ -51,7 +55,7 @@ export async function api(request,env={}){
   if(branchRoute){const data={branches:branches(await upstream(SOURCE)),source:SOURCE};return json({...data,...(isPublic?{apiVersion:'1',requestId}:{})});}
   const input=await requestJson(request);
   const data=await lookup(input);
-  return json({...data,...(isPublic?{apiVersion:'1',requestId}:{})});
+  return json(importRoute?importBills(data):{...data,...(isPublic?{apiVersion:'1',requestId}:{})});
  }catch(error){
   if(error instanceof InputError)return fail(error.message,error.status,error.code);
   return fail(error.name==='TimeoutError'?'NEA is taking too long to respond. Please try again.':error.message,502,'NEA_LOOKUP_FAILED');

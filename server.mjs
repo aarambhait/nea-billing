@@ -8,7 +8,7 @@ const server=http.createServer(async(req,res)=>{
   if(url.pathname.startsWith('/api/')) {
    const chunks=[];let size=0;for await(const c of req){size+=c.length;if(size>4096){res.writeHead(413);res.end('Request too large');return;}chunks.push(c);}
    const request=new Request(url,{method:req.method,headers:req.headers,...(req.method==='GET'||req.method==='HEAD'?{}:{body:Buffer.concat(chunks)})});
-   const response=await api(request);res.writeHead(response.status,Object.fromEntries(response.headers));res.end(await response.text());return;
+   const response=await api(request,{NEA_ADAPTER_TOKEN:process.env.NEA_ADAPTER_TOKEN});res.writeHead(response.status,Object.fromEntries(response.headers));res.end(await response.text());return;
   }
   if(url.pathname!=='/'){res.writeHead(404);res.end('Not found');return;}
   res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});res.end(html);

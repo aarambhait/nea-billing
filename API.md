@@ -2,7 +2,7 @@
 
 Base URL: **https://nea.saadhan.app**
 
-This read-only API runs entirely on the Cloudflare Worker. It is open without API keys, registration or cookies. Cross-origin browser calls are supported with wildcard CORS, including OPTIONS preflight. The existing app endpoints remain compatible.
+This read-only API runs entirely on the Cloudflare Worker. It is open without API keys, registration or cookies. Cross-origin browser calls are supported with wildcard CORS, including OPTIONS preflight. Anonymous lookups are disabled; never expose the token in browser code.
 
 - [Interactive-use documentation](https://nea.saadhan.app/api/docs)
 - [OpenAPI 3.1 specification](https://nea.saadhan.app/api/v1/openapi.json)
@@ -88,7 +88,7 @@ The `X-Request-ID` header identifies public requests. No customer statement or a
 
 A native Cloudflare `API_RATE_LIMITER` binding allows approximately 30 requests per 60 seconds per client IP per Cloudflare location. This is a protective, location-local limit, not a strict worldwide quota. Shared networks share capacity. The legacy app and v1 data endpoints use the same limiter key so the legacy endpoints cannot bypass the limit. Calls to those endpoints consume capacity even if the input is invalid.
 
-Documentation, specification, health and preflight do not consume limiter capacity. 429 responses include `Retry-After: 60`. Cloudflare supplies the trusted `CF-Connecting-IP` header. Anonymous service users have no separate authenticated identity key.
+Documentation, specification, health and preflight do not consume limiter capacity. 429 responses include `Retry-After: 60`. Cloudflare supplies the trusted `CF-Connecting-IP` header. Authenticated callers still share the IP rate limit.
 
 The config uses rate-limiter namespace 847291, which is a user-defined positive integer. Keep it unique within your Cloudflare account unless sharing counters is intentional. `REQUIRE_API_RATE_LIMIT: "true"` fails closed if the production binding is missing. Local Node examples omit the binding and do not enforce edge limits; production runs through Wrangler with the committed binding.
 
