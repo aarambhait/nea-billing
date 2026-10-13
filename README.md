@@ -43,9 +43,9 @@ Copy `adapter.mjs`, `statement.mjs`, `api.mjs`, `openapi.mjs` and `documentation
 
 ## Public API
 
-The service is open at `https://nea-billing.aitrc.workers.dev/api/v1/`. No API keys or login are required. Browser CORS, an OpenAPI specification, and Cloudflare-native request limits are included.
+The service is open at `https://nea.saadhan.app/api/v1/`. No API keys or login are required. Browser CORS, an OpenAPI specification, and Cloudflare-native request limits are included.
 
-[Public API documentation](API.md) · [Live API docs](https://nea-billing.aitrc.workers.dev/api/docs) · [OpenAPI](https://nea-billing.aitrc.workers.dev/api/v1/openapi.json)
+[Public API documentation](API.md) · [Live API docs](https://nea.saadhan.app/api/docs) · [OpenAPI](https://nea.saadhan.app/api/v1/openapi.json)
 
 Use `GET /api/v1/branches` and `POST /api/v1/readings` for external integrations. The following legacy endpoints remain for the web app:
 

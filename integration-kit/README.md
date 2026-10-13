@@ -281,7 +281,7 @@ In the owner-authorized development statement, Shrawan/2083 reported 11,655 unit
 
 ## Public API v1 on Cloudflare
 
-The public service is `https://nea-billing.aitrc.workers.dev`. External consumers can use:
+The public service is `https://nea.saadhan.app`. External consumers can use:
 
 - GET `/api/v1/branches`
 - POST `/api/v1/readings` with JSON
@@ -291,7 +291,7 @@ The public service is `https://nea-billing.aitrc.workers.dev`. External consumer
 
 No API key or registration is required. v1 responses and errors include wildcard CORS; OPTIONS returns 204 for browser preflight. Successful lookups add `apiVersion: "1"` and `requestId` to the existing statement fields. Errors include a machine-readable code and requestId, also exposed as X-Request-ID. Legacy app routes remain compatible and keep their existing browser-origin policy.
 
-Copy **all five backend modules** when reusing the shared handler: adapter.mjs, statement.mjs, api.mjs, openapi.mjs and documentation.mjs. The core adapter alone still needs only adapter.mjs and statement.mjs. Next.js route templates include a v1 catch-all and docs route. The browser client defaults to v1 and accepts `{baseUrl: 'https://nea-billing.aitrc.workers.dev'}` for remote calls.
+Copy **all five backend modules** when reusing the shared handler: adapter.mjs, statement.mjs, api.mjs, openapi.mjs and documentation.mjs. The core adapter alone still needs only adapter.mjs and statement.mjs. Next.js route templates include a v1 catch-all and docs route. The browser client defaults to v1 and accepts `{baseUrl: 'https://nea.saadhan.app'}` for remote calls.
 
 The production Worker receives a native `API_RATE_LIMITER` binding through wrangler.jsonc: approximately 30 data-endpoint requests per minute per client IP per Cloudflare location. Both legacy and v1 endpoints share it. Clients behind shared networks share capacity; this is not a strict global quota. Health, documentation, specification and preflight are excluded. 429 includes Retry-After: 60. REQUIRE_API_RATE_LIMIT=true prevents production data requests from proceeding if the binding is missing. Local Node examples omit the binding and do not enforce edge limits.
 

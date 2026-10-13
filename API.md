@@ -1,12 +1,12 @@
 # NEA Billing Public API v1
 
-Base URL: **https://nea-billing.aitrc.workers.dev**
+Base URL: **https://nea.saadhan.app**
 
 This read-only API runs entirely on the Cloudflare Worker. It is open without API keys, registration or cookies. Cross-origin browser calls are supported with wildcard CORS, including OPTIONS preflight. The existing app endpoints remain compatible.
 
-- [Interactive-use documentation](https://nea-billing.aitrc.workers.dev/api/docs)
-- [OpenAPI 3.1 specification](https://nea-billing.aitrc.workers.dev/api/v1/openapi.json)
-- [Runtime health](https://nea-billing.aitrc.workers.dev/api/v1/health)
+- [Interactive-use documentation](https://nea.saadhan.app/api/docs)
+- [OpenAPI 3.1 specification](https://nea.saadhan.app/api/v1/openapi.json)
+- [Runtime health](https://nea.saadhan.app/api/v1/health)
 
 ## Endpoints
 
@@ -21,13 +21,13 @@ This read-only API runs entirely on the Cloudflare Worker. It is open without AP
 ## Requests
 
 ```bash
-curl https://nea-billing.aitrc.workers.dev/api/v1/branches
+curl https://nea.saadhan.app/api/v1/branches
 ```
 
 For a statement, use consumer ID, SC number, branch ID and Gregorian ISO dates:
 
 ```bash
-curl https://nea-billing.aitrc.workers.dev/api/v1/readings \
+curl https://nea.saadhan.app/api/v1/readings \
   -H 'Content-Type: application/json' \
   --data '{"consumerId":"12345","scNo":"001.19.001","branch":"241","from":"2026-03-01","to":"2026-10-13"}'
 ```
@@ -37,7 +37,7 @@ The account identifiers are placeholders. Replace them with details for a connec
 Browser example:
 
 ```js
-const response = await fetch('https://nea-billing.aitrc.workers.dev/api/v1/readings', {
+const response = await fetch('https://nea.saadhan.app/api/v1/readings', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({
@@ -53,7 +53,7 @@ if (!response.ok) throw new Error(data.error);
 console.log(data.summary.months);
 ```
 
-The integration kit's `examples/frontend-client.mjs` accepts `{baseUrl: 'https://nea-billing.aitrc.workers.dev'}` to consume this service from another app. By default it uses versioned endpoints on the current origin.
+The integration kit's `examples/frontend-client.mjs` accepts `{baseUrl: 'https://nea.saadhan.app'}` to consume this service from another app. By default it uses versioned endpoints on the current origin.
 
 ## Responses
 
