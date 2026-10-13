@@ -1608,4 +1608,13 @@ test('Authenticated storage-ready endpoint returns reconciled bill contract',asy
  const original=globalThis.fetch;globalThis.fetch=async()=>new Response(multiSectionFixture);
  try{const response=await api(new Request('https://example.com/api/import-bills',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(input)}));assert.equal(response.status,200);const body=await response.json();assert.equal(body.contractVersion,1);assert.equal(body.bills.length,2);assert.equal(body.bills[0].bill_period,'2083-05');assert.equal(body.bills[1].bill_period,'2083-06');assert.equal(body.bills[0].consumption_kwh,null);}finally{globalThis.fetch=original;}
 });
+test('Import rejects ambiguous allocation, unknown/duplicate periods and invalid units',()=>{
+ const make=rows=>({account:{},records:rows,summary:analyze(rows,{billAmount:rows.filter(r=>r.kind==='bill').reduce((s,r)=>s+r.billAmount,0),payableAmount:rows.filter(r=>r.kind==='bill').reduce((s,r)=>s+r.payableAmount,0),paidAmount:0},input.scNo)});
+ assert.throws(()=>importBills(make([component(1,'monthly'),component(2,'vat',{transactionId:null})])),/unallocated/);
+ assert.throws(()=>importBills(make([component(1,'monthly',{period:'Unknown/2083'})])),/period/);
+ assert.throws(()=>importBills(make([component(1,'monthly'),component(2,'monthly')])),/Multiple bill/);
+ assert.throws(()=>importBills(make([component(1,'monthly',{consumedUnits:-1})])),/values/);
+ assert.throws(()=>importBills(make([component(1,'monthly'),component(1,'monthly')])),/Duplicate NEA/);
+ assert.equal(importBills({account:{},records:[],summary:analyze([],{billAmount:0,payableAmount:0,paidAmount:0},input.scNo)}).bills.length,0);
+});
 ```
