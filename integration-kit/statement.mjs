@@ -29,6 +29,8 @@ export function analyze(records,sourceTotals,scNo) {
  const totals={billAmount:sumMoney(records.filter(r=>r.kind==='bill').map(r=>r.billAmount)),payableAmount:sumMoney(records.filter(r=>r.kind==='bill').map(r=>r.payableAmount)),paidAmount:sumMoney(records.filter(r=>r.kind==='payment').map(r=>r.paidAmount))};
  const mismatches=sourceTotals?Object.keys(totals).filter(k=>sourceTotals[k]!==null&&(totals[k]===null||cents(totals[k])!==cents(sourceTotals[k]))):[];
  const paidDifference=totals.paidAmount!==null&&totals.payableAmount!==null?(cents(totals.paidAmount)-cents(totals.payableAmount))/100:null;
+ const reportedMonths=months.filter(m=>m.consumedUnits!==null);
+ const consumption={totalReportedUnits:reportedMonths.length?reportedMonths.reduce((total,m)=>total+m.consumedUnits,0):null,reportedMonthlyBills:reportedMonths.length,missingMonthlyBills:months.length-reportedMonths.length,firstReportedPeriod:reportedMonths[0]?.period??null,lastReportedPeriod:reportedMonths.at(-1)?.period??null,complete:months.length>0&&reportedMonths.length===months.length};
  const middle=scNo.match(/^\d+[.\/-](\d{1,2})[.\/-]/)?.[1];const scheduledReadingDay=middle&&Number(middle)>=1&&Number(middle)<=32?Number(middle):null;
- return {months,totals,sourceTotals,paidDifference,sourceTotalMismatches:mismatches,unallocatedCharges:extras.filter(x=>!assigned.has(x.sequence)),scheduledReadingDay};
+ return {months,consumption,totals,sourceTotals,paidDifference,sourceTotalMismatches:mismatches,unallocatedCharges:extras.filter(x=>!assigned.has(x.sequence)),scheduledReadingDay};
 }

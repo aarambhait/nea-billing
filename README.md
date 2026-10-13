@@ -54,6 +54,12 @@ These identifiers are placeholders. Damauli's verified branch ID is 241; the ret
 
 The response includes verified account details, original records, derived monthly summaries, source totals, requested range and fetched timestamp. Empty numeric cells stay null.
 
+## Consumed units
+
+The app shows NEA-reported consumed units in the latest-month card, each selected monthly breakdown, the monthly bill table, the chart and CSV. The consumption overview gives the total reported units and coverage in the selected range. Missing values remain unavailable, not zero; VAT and payment rows do not contribute to consumption totals.
+
+The development-account statement started providing units in Shrawan/2083: 11,655, followed by 11,974 in Bhadra and 11,282 in Ashwin (34,911 reported units). This is an observation for that account, not a forced start date for all accounts.
+
 ## Accounting behavior
 
 The importer preserves NEA's recorded VAT, rebate, penalty and payable amounts. It groups VAT/arrears only when transaction ID plus paid date identifies one monthly bill. Shared receipts are not allocated arbitrarily, and receipts are counted once. Parsed financial totals are checked against NEA's TOTAL row; a mismatch rejects the import.
