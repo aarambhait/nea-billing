@@ -6,7 +6,8 @@
     "start": "node server.mjs",
     "test": "node --test tests.mjs",
     "build": "node build.mjs",
-    "check": "node tests.mjs && node integration-kit/tests.mjs",
+    "sync": "node scripts/sync-kit.mjs",
+    "check": "node scripts/sync-kit.mjs --check && node tests.mjs && node integration-kit/tests.mjs && node build.mjs && node scripts/worker-check.mjs",
     "deploy": "wrangler deploy",
     "dev:worker": "npm run build && wrangler dev"
   },
