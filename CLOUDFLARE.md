@@ -95,3 +95,5 @@ Official documentation:
 - [Workers Builds Git integration](https://developers.cloudflare.com/workers/ci-cd/builds/git-integration/)
 - [Build and deployment settings](https://developers.cloudflare.com/workers/ci-cd/builds/configuration/)
 - [Wrangler configuration](https://developers.cloudflare.com/workers/wrangler/configuration/)
+
+NEA upstream endpoints require `Authorization: Bearer <NEA_ADAPTER_TOKEN>`. Set the Worker secret with `wrangler secret put NEA_ADAPTER_TOKEN` and use the same value in the CSMS environment. Do not embed it in browser or mobile code. The public demo can no longer perform anonymous lookups; use an authenticated server proxy. `/api/import-bills` returns `{contractVersion: 1, account, bills}` with storage-ready monthly bills. Deploy the adapter before switching the backend URL to this endpoint. Health and documentation remain public.

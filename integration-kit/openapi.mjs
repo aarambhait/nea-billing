@@ -3,7 +3,7 @@ export function apiSpecification(){return {
   "info": {
     "title": "NEA Billing Public API",
     "version": "1.0.0",
-    "description": "Independent, unauthenticated, read-only adapter to NEA billing HTML. Amounts are NPR. Missing units remain null. Rate limit: 30 NEA-bound requests per minute per client IP per Cloudflare location; an approximate protective limit, not a global quota. Shared-IP clients share capacity. No account statement storage."
+    "description": "Independent, authenticated, read-only adapter to NEA billing HTML. Amounts are NPR. Missing units remain null. Rate limit: 30 NEA-bound requests per minute per client IP per Cloudflare location; an approximate protective limit, not a global quota. Shared-IP clients share capacity. No account statement storage."
   },
   "servers": [
     {
@@ -11,7 +11,7 @@ export function apiSpecification(){return {
       "description": "The Cloudflare origin serving this specification"
     }
   ],
-  "security": [],
+  "security": [{"bearerAuth": []}],
   "paths": {
     "/api/v1/branches": {
       "get": {
@@ -188,6 +188,7 @@ export function apiSpecification(){return {
     "/api/v1/health": {
       "get": {
         "operationId": "health",
+        "security": [],
         "summary": "Check API runtime availability; does not contact NEA",
         "responses": {
           "200": {
@@ -220,6 +221,7 @@ export function apiSpecification(){return {
     },
     "/api/v1/openapi.json": {
       "get": {
+        "security": [],
         "operationId": "openApi",
         "summary": "Download this OpenAPI specification",
         "responses": {
@@ -238,6 +240,7 @@ export function apiSpecification(){return {
     }
   },
   "components": {
+    "securitySchemes": {"bearerAuth": {"type": "http", "scheme": "bearer"}},
     "schemas": {
       "LookupRequest": {
         "type": "object",

@@ -45,7 +45,7 @@ Copy `adapter.mjs`, `statement.mjs`, `api.mjs`, `openapi.mjs` and `documentation
 
 ## Public API
 
-The service is open at `https://nea.saadhan.app/api/v1/`. No API keys or login are required. Browser CORS, an OpenAPI specification, and Cloudflare-native request limits are included.
+The service is open at `https://nea.saadhan.app/api/v1/`. NEA endpoints require a server-side Bearer token. Browser CORS, an OpenAPI specification, and Cloudflare-native request limits are included.
 
 [Public API documentation](API.md) · [Live API docs](https://nea.saadhan.app/api/docs) · [OpenAPI](https://nea.saadhan.app/api/v1/openapi.json)
 
@@ -74,7 +74,7 @@ The importer preserves NEA's recorded VAT, rebate, penalty and payable amounts. 
 
 The source exposes billed consumed units, not previous/current cumulative meter readings. The SC middle group is a reading-schedule cue; actual reading dates govern payment windows. The portal does not expose the taxable base or account category, so the app does not calculate a universal 13% VAT addition. Differences between paid and payable amounts are displayed without inventing credit or debt.
 
-This is an independent adapter for an undocumented HTML interface, not an official NEA API. It does not submit readings, initiate payments, or store account statements. The public API intentionally has no login or API keys. Cloudflare rate limits protect its data endpoints; only query connections you are authorized to access.
+This is an independent adapter for an undocumented HTML interface, not an official NEA API. It does not submit readings, initiate payments, or store account statements. NEA endpoints require the Worker NEA_ADAPTER_TOKEN secret via Authorization: Bearer. Cloudflare rate limits protect its data endpoints; only query connections you are authorized to access.
 
 ## Sources
 
