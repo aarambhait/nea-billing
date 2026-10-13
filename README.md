@@ -39,9 +39,15 @@ npm start
 node tests.mjs
 ```
 
-Copy `adapter.mjs`, `statement.mjs` and `api.mjs` into your other project's backend. The guide documents NEA's exact form request, HTML column mapping, JSON schema, grouping logic, error handling, snapshot imports and project-specific access integration.
+Copy `adapter.mjs`, `statement.mjs`, `api.mjs`, `openapi.mjs` and `documentation.mjs` into your other project's backend. The guide documents NEA's exact form request, HTML column mapping, JSON schema, grouping logic, error handling, snapshot imports and project-specific access integration.
 
-## API
+## Public API
+
+The service is open at `https://nea-billing.aitrc.workers.dev/api/v1/`. No API keys or login are required. Browser CORS, an OpenAPI specification, and Cloudflare-native request limits are included.
+
+[Public API documentation](API.md) · [Live API docs](https://nea-billing.aitrc.workers.dev/api/docs) · [OpenAPI](https://nea-billing.aitrc.workers.dev/api/v1/openapi.json)
+
+Use `GET /api/v1/branches` and `POST /api/v1/readings` for external integrations. The following legacy endpoints remain for the web app:
 
 - `GET /api/branches`: discover NEA's branch IDs from its public form.
 - `POST /api/readings`: submit JSON with `consumerId`, `scNo`, `branch`, `from` and `to`.
@@ -66,7 +72,7 @@ The importer preserves NEA's recorded VAT, rebate, penalty and payable amounts. 
 
 The source exposes billed consumed units, not previous/current cumulative meter readings. The SC middle group is a reading-schedule cue; actual reading dates govern payment windows. The portal does not expose the taxable base or account category, so the app does not calculate a universal 13% VAT addition. Differences between paid and payable amounts are displayed without inventing credit or debt.
 
-This is an independent adapter for an undocumented HTML interface, not an official NEA API. It does not submit readings, initiate payments, or store account statements. The local demo has no login; apply your project's existing authentication, account ownership checks and request limits before exposing it to other users.
+This is an independent adapter for an undocumented HTML interface, not an official NEA API. It does not submit readings, initiate payments, or store account statements. The public API intentionally has no login or API keys. Cloudflare rate limits protect its data endpoints; only query connections you are authorized to access.
 
 ## Sources
 

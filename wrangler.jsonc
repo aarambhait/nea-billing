@@ -3,5 +3,18 @@
   "name": "nea-billing",
   "main": "dist/server/index.js",
   "compatibility_date": "2026-10-13",
-  "workers_dev": true
+  "workers_dev": true,
+  "ratelimits": [
+    {
+      "name": "API_RATE_LIMITER",
+      "namespace_id": "847291",
+      "simple": {
+        "limit": 30,
+        "period": 60
+      }
+    }
+  ],
+  "vars": {
+    "REQUIRE_API_RATE_LIMIT": "true"
+  }
 }

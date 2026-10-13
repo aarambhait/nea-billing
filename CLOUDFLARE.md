@@ -25,7 +25,7 @@ The repository configuration is ready. A Cloudflare account owner must connect t
 | Package manager | npm; committed `package-lock.json` |
 | Node version | 22 or newer |
 | API token | Allow Cloudflare to create/select its build token |
-| Runtime variables | None required for the NEA lookup |
+| Runtime variables | `REQUIRE_API_RATE_LIMIT=true` (provided by Wrangler config) |
 
 If your dashboard asks for an install command, use `npm ci`. If its Node version needs an explicit build variable, set `NODE_VERSION=22` or a newer supported version.
 
@@ -71,9 +71,9 @@ After Cloudflare reports success:
 
 ## Runtime and data handling
 
-The Worker serves `/` and `/api/*`. It uses HTTP requests to NEA; it needs no D1, R2, KV or database bindings. Customer details and fetched statements are not persisted by the app. NEA's HTML interface can change; input checks and statement totals reconciliation reject unexpected results.
+The Worker serves `/` and `/api/*`. It uses HTTP requests to NEA; it needs no D1, R2, KV or database bindings. The config adds a native `API_RATE_LIMITER` binding (30 requests/60 seconds per client IP per Cloudflare location). Both legacy and v1 data endpoints share it. Customer details and fetched statements are not persisted by the app. NEA's HTML interface can change; input checks and statement totals reconciliation reject unexpected results.
 
-`workers_dev: true` enables a public Workers URL after deployment. This standalone demo has no user login. If your project needs restricted access, apply Cloudflare Access or your application's authentication and connection-ownership rules before sharing the URL.
+`workers_dev: true` enables a public Workers URL after deployment. This standalone demo has no user login. The versioned `/api/v1/*` endpoints are deliberately open to everyone with CORS enabled and no API keys. [Public API usage and limits](API.md).
 
 ## Troubleshooting
 
