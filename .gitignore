@@ -6,3 +6,6 @@ dist/
 .env.*
 local-request.json
 nea-statement.html
+.wrangler/
+.dev.vars
+.dev.vars.*

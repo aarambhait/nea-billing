@@ -1,1 +1,19 @@
-{"name":"nea-meter-readings","private":true,"type":"module","scripts":{"start":"node server.mjs","test":"node --test tests.mjs","build":"node build.mjs"}}
+{
+  "name": "nea-billing",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test tests.mjs",
+    "build": "node build.mjs",
+    "check": "node tests.mjs && node integration-kit/tests.mjs",
+    "deploy": "wrangler deploy",
+    "dev:worker": "npm run build && wrangler dev"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "wrangler": "4.149.0"
+  }
+}

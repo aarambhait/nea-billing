@@ -4,7 +4,7 @@ A web app and reusable backend adapter for NEA's public billing portal. Fetch bi
 
 ## Run the app
 
-Requires Node.js 22 or newer. No dependency installation is needed.
+Requires Node.js 22 or newer. The local Node app has no runtime dependencies. Run `npm ci` to install the pinned Wrangler development dependency when building or deploying to Cloudflare.
 
 ```bash
 npm start
@@ -17,9 +17,15 @@ npm test
 npm run build
 ```
 
-The build produces a dependency-free Cloudflare Worker at `dist/server/index.js`, with the UI embedded. Configure your hosting provider separately; private ChatGPT Site identity and credentials are not included.
+The build produces a dependency-free Cloudflare Worker at `dist/server/index.js`, with the UI embedded. Cloudflare deployment configuration is included in `wrangler.jsonc`. [Connect this repository once to enable automatic deployments](CLOUDFLARE.md). Private ChatGPT Site identity and credentials are not included.
 
 For Node 24+ in a proxy-only environment, use `NODE_USE_ENV_PROXY=1 npm start` when required by your infrastructure.
+
+## Cloudflare automatic deployments
+
+Use **Cloudflare Workers Builds** with repository `aarambhait/nea-billing`, production branch `main`, build command `npm run check && npm run build`, and deploy command `npm run deploy`. Worker name: `nea-billing`.
+
+[One-time account connection, exact settings and verification](CLOUDFLARE.md). Once the account connection is activated, pushes to `main` deploy automatically after the checks pass.
 
 ## Integration kit
 

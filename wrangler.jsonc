@@ -1,0 +1,7 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "nea-billing",
+  "main": "dist/server/index.js",
+  "compatibility_date": "2026-10-13",
+  "workers_dev": true
+}
