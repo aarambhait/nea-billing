@@ -21,16 +21,18 @@ export function parseStatement(html, input) {
  if(!account.consumerId || !account.scNo) throw new Error('NEA did not return a matching account. Check consumer ID, SC number and branch.');
  if(account.consumerId!==input.consumerId || account.scNo.toUpperCase()!==input.scNo.toUpperCase()) throw new Error('NEA returned a different account. Please check your details.');
  if(!/CONSUMED\s+UNITS/i.test(clean(html))) throw new Error('NEA statement format has changed.');
- const records=[];let sourceTotals=null;
+ const records=[];const groups=[];let group={id:1,status:null,records:[],sourceTotals:null};
  for(const row of html.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)) {
   const c=[...row[1].matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/gi)].map(m=>clean(m[1]));
-  if(c.length===13&&c[3]==='TOTAL'){sourceTotals={billAmount:number(c[5]),payableAmount:number(c[8]),paidAmount:number(c[9])};continue;}
+  if(c.length===13&&c[3].toUpperCase()==='TOTAL'){group.status=c[1]||null;group.sourceTotals={billAmount:number(c[5]),payableAmount:number(c[8]),paidAmount:number(c[9])};groups.push(group);group={id:groups.length+1,status:null,records:[],sourceTotals:null};continue;}
   if(c.length!==13 || !/^\d+$/.test(c[0])) continue;
-  records.push({sequence:Number(c[0]),kind:c[2]?'bill':'payment',category:!c[2]?'receipt':/^VAT$/i.test(c[2])?'vat':/^ARREARS$/i.test(c[2])?'arrears':/\/\d{4}$/.test(c[2])?'monthly':'other',status:c[1],period:c[2]||null,billDate:c[3]||null,consumedUnits:number(c[4]),billAmount:number(c[5]),adjustment:c[6]||null,rate:number(c[7]),payableAmount:number(c[8]),paidAmount:number(c[9]),merchant:c[10]||null,transactionId:c[11]||null,paidDate:c[12]||null});
+  const category=!c[2]&&number(c[9])!==null?'receipt':/^ADVANCE$/i.test(c[2])?'advance':/^PAID\s+UP\s*TO\b/i.test(c[2])||/^PAY\s+ADVANCE$/i.test(c[1])?'balance':!c[2]?'receipt':/^VAT$/i.test(c[2])?'vat':/^ARREARS$/i.test(c[2])?'arrears':/\/\d{4}$/.test(c[2])?'monthly':'other';
+  const record={sequence:Number(c[0]),statementGroup:group.id,kind:['advance','balance'].includes(category)?'balance':c[2]?'bill':'payment',category,status:c[1],period:c[2]||null,billDate:c[3]||null,consumedUnits:number(c[4]),billAmount:number(c[5]),adjustment:c[6]||null,rate:number(c[7]),payableAmount:number(c[8]),paidAmount:number(c[9]),merchant:c[10]||null,transactionId:c[11]||null,paidDate:c[12]||null};records.push(record);group.records.push(record);
  }
- const summary=analyze(records,sourceTotals,account.scNo);
+ if(group.records.length)groups.push(group);
+ const summary=analyze(records,null,account.scNo,groups);
  if(summary.sourceTotalMismatches.length) throw new Error('NEA statement rows do not reconcile with its totals. Please retry or use the official portal.');
- return {account,records,summary,source:SOURCE,fetchedAt:new Date().toISOString(),range:{from:input.from,to:input.to},readingAvailability:{previousReading:false,currentReading:false,consumedUnits:summary.months.some(r=>r.consumedUnits!==null)},note:'NEA exposes billed consumed units, not cumulative meter readings. Blank upstream values are returned as null. VAT and arrears are separate bill rows; payment receipts are separate payment rows.'};
+ return {account,records,summary,source:SOURCE,fetchedAt:new Date().toISOString(),range:{from:input.from,to:input.to},readingAvailability:{previousReading:false,currentReading:false,consumedUnits:summary.months.some(r=>r.consumedUnits!==null)},note:'NEA exposes billed consumed units, not cumulative meter readings. Blank upstream values are returned as null. VAT and arrears are separate bill rows; payment receipts are separate payment rows. Advance and balance information is preserved separately from bill/payment totals.'};
 }
 export function validate(body) {
  const consumerId=String(body.consumerId??'').trim(), scNo=String(body.scNo??'').trim(), branch=String(body.branch??'').trim();

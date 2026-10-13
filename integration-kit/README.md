@@ -72,9 +72,9 @@ The 13 source columns map to:
 | 11 | transactionId |
 | 12 | paidDate |
 
-The parser strips HTML comments, extracts customer details, checks returned consumer ID and SC number against the input, requires the consumed-units header, and keeps source rows. Blank numbers stay null. The TOTAL row is a control total, not another bill. The small parser uses regexes tied to the observed HTML; a larger product can replace it with a DOM parser while preserving the account checks, null handling and totals reconciliation.
+The parser strips HTML comments, extracts customer details, checks returned consumer ID and SC number against the input, requires the consumed-units header, and keeps source rows. Blank numbers stay null. Each TOTAL row is a control for the preceding section, not another bill. All original sections are retained and reconciled independently. The small parser uses regexes tied to the observed HTML; a larger product can replace it with a DOM parser while preserving the account checks, null handling and totals reconciliation.
 
-Category rules: empty period -> receipt; VAT -> vat; ARREARS -> arrears; period ending in /four-digit-year -> monthly; anything else -> other. kind is payment for receipt, bill otherwise. Preserve unknown categories for audit rather than dropping them.
+Category rules: empty period -> receipt; VAT -> vat; ARREARS -> arrears; period ending in /four-digit-year -> monthly; anything else -> other. kind is payment for receipts, balance for ADVANCE / PAID UPTO / PAY ADVANCE information, and bill for other charge rows. Preserve unknown categories for audit rather than dropping them.
 
 ## Monthly totals
 
@@ -93,13 +93,13 @@ For each month:
 
 For the selected statement:
 
-- totals.billAmount sums bill component rows only
+- totals.billAmount sums bill component rows only, excluding advance/balance information
 - totals.payableAmount sums bill component rows only
 - totals.paidAmount sums receipt rows only
-- sourceTotals stores NEA's TOTAL row
+- sourceTotals aggregates separately reported billing-section controls; statementGroups preserves every original subtotal
 - paidDifference is paid minus payable, not an asserted outstanding balance/credit
 
-The parser rejects disagreements with NEA's totals. The current implementation sums integer paisa and returns numbers, matching the verified statement. For future fractional-paisa records or audited imports retain original four-decimal strings and use decimal arithmetic or four-decimal integers.
+The parser rejects disagreements with each matching NEA section subtotal. The implementation sums integer ten-thousandths of a rupee and returns numbers, preserving the source's four-decimal precision. For future fractional-paisa records or audited imports retain original four-decimal strings and use decimal arithmetic or four-decimal integers.
 
 ## Verified regression case
 
@@ -113,7 +113,7 @@ The origin check is not authentication. Add your project's login, connection own
 
 ## Database imports
 
-This adapter does not persist anything. For importing, use connections (owner, branch ID, consumer ID, SC number), import runs (connection, range, fetched time, parser version), source rows (import ID, sequence, source fields), and optional derived monthly views. Scope sequence to an import because it changes with date range. Do not use transaction ID as a source-row unique key: bills, VAT and receipts share it.
+This adapter does not persist anything. For importing, use connections (owner, branch ID, consumer ID, SC number), import runs (connection, range, fetched time, parser version), source rows (import ID, sequence, source fields), and optional derived monthly views. Scope sequence to an import and statementGroup because it changes with date range and can restart in another section. Do not use transaction ID as a source-row unique key: bills, VAT and receipts share it.
 
 Begin with immutable snapshots per import and display the latest successful snapshot. Do not sum overlapping snapshots. Build a merged ledger only after defining stable identity/correction rules for shared transactions and unpaid rows. Write successful complete imports atomically; preserve the last successful snapshot if a later fetch fails. Use DECIMAL money columns rather than floats and server-derived owner/connection IDs.
 
@@ -249,7 +249,7 @@ node tests.mjs
 npm run test:live < local-request.json
 ```
 
-There are eighteen portable tests, including monthly-consumption coverage and the distinction between missing values and actual zero consumption. Live upstream statements were also checked during development. The ZIP does not include the downloaded statements used by those original optional fixture tests. The test:live script accepts an authorized connection request on stdin, fetches its own response and reports parsed record counts and totals. A failing historical assertion can mean NEA changed its records, so investigate rather than hardcoding the expected amounts into the importer.
+There are twenty-three portable tests, including monthly-consumption coverage and the distinction between missing values and actual zero consumption. Live upstream statements were also checked during development. The ZIP does not include the downloaded statements used by those original optional fixture tests. The test:live script accepts an authorized connection request on stdin, fetches its own response and reports parsed record counts and totals. A failing historical assertion can mean NEA changed its records, so investigate rather than hardcoding the expected amounts into the importer.
 
 Before releasing in your project:
 
@@ -299,6 +299,14 @@ The Cloudflare namespace ID is an account-unique, user-defined positive integer;
 
 The canonical NEA hostname is neabilling.com; the verified www alias is retried only for transient network/server failures within the same 25-second deadline. The production Worker enables public fetch routing. Access-denial responses are never retried against aliases.
 
+## Multiple section subtotals and advance balances
+
+The updated NEA statement can append a PAY ADVANCE section after a paid-transaction TOTAL. Taking only the last TOTAL would replace the billing subtotal with a balance subtotal and incorrectly reject valid data.
+
+The parser now retains each section and reconciles the source columns separately. `records[].statementGroup` and `summary.months[].statementGroup` identify source sections. `summary.statementGroups` includes id, status, billing, recordSequences, sourceTotals, computedTotals and mismatches. `summary.balanceRecords` preserves ADVANCE and PAID UPTO rows with kind balance; they are excluded from bill/payment totals and consumed-unit totals. Negative advance amounts are displayed as NEA's information, not inferred as new bills or receipts.
+
+In the current owner-authorized example, the paid section still reports billed 625,809.93 / payable 613,963 / paid 613,964.35; a separate balance section reports ADVANCE -1.43 and PAID UPTO. Both section controls reconcile, all 22 source rows are preserved, and reported consumption remains 34,911. Genuine changes to either subtotal still reject the statement. Four-decimal source amounts are summed before presentation rounding. Source row identity in a snapshot is (import_run_id, statementGroup, sequence).
+
 The following appendix includes all supplied source files, so this Markdown guide is independently usable even without extracting the ZIP.
 
 ## Source: package.json
@@ -346,16 +354,18 @@ export function parseStatement(html, input) {
  if(!account.consumerId || !account.scNo) throw new Error('NEA did not return a matching account. Check consumer ID, SC number and branch.');
  if(account.consumerId!==input.consumerId || account.scNo.toUpperCase()!==input.scNo.toUpperCase()) throw new Error('NEA returned a different account. Please check your details.');
  if(!/CONSUMED\s+UNITS/i.test(clean(html))) throw new Error('NEA statement format has changed.');
- const records=[];let sourceTotals=null;
+ const records=[];const groups=[];let group={id:1,status:null,records:[],sourceTotals:null};
  for(const row of html.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)) {
   const c=[...row[1].matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/gi)].map(m=>clean(m[1]));
-  if(c.length===13&&c[3]==='TOTAL'){sourceTotals={billAmount:number(c[5]),payableAmount:number(c[8]),paidAmount:number(c[9])};continue;}
+  if(c.length===13&&c[3].toUpperCase()==='TOTAL'){group.status=c[1]||null;group.sourceTotals={billAmount:number(c[5]),payableAmount:number(c[8]),paidAmount:number(c[9])};groups.push(group);group={id:groups.length+1,status:null,records:[],sourceTotals:null};continue;}
   if(c.length!==13 || !/^\d+$/.test(c[0])) continue;
-  records.push({sequence:Number(c[0]),kind:c[2]?'bill':'payment',category:!c[2]?'receipt':/^VAT$/i.test(c[2])?'vat':/^ARREARS$/i.test(c[2])?'arrears':/\/\d{4}$/.test(c[2])?'monthly':'other',status:c[1],period:c[2]||null,billDate:c[3]||null,consumedUnits:number(c[4]),billAmount:number(c[5]),adjustment:c[6]||null,rate:number(c[7]),payableAmount:number(c[8]),paidAmount:number(c[9]),merchant:c[10]||null,transactionId:c[11]||null,paidDate:c[12]||null});
+  const category=!c[2]&&number(c[9])!==null?'receipt':/^ADVANCE$/i.test(c[2])?'advance':/^PAID\s+UP\s*TO\b/i.test(c[2])||/^PAY\s+ADVANCE$/i.test(c[1])?'balance':!c[2]?'receipt':/^VAT$/i.test(c[2])?'vat':/^ARREARS$/i.test(c[2])?'arrears':/\/\d{4}$/.test(c[2])?'monthly':'other';
+  const record={sequence:Number(c[0]),statementGroup:group.id,kind:['advance','balance'].includes(category)?'balance':c[2]?'bill':'payment',category,status:c[1],period:c[2]||null,billDate:c[3]||null,consumedUnits:number(c[4]),billAmount:number(c[5]),adjustment:c[6]||null,rate:number(c[7]),payableAmount:number(c[8]),paidAmount:number(c[9]),merchant:c[10]||null,transactionId:c[11]||null,paidDate:c[12]||null};records.push(record);group.records.push(record);
  }
- const summary=analyze(records,sourceTotals,account.scNo);
+ if(group.records.length)groups.push(group);
+ const summary=analyze(records,null,account.scNo,groups);
  if(summary.sourceTotalMismatches.length) throw new Error('NEA statement rows do not reconcile with its totals. Please retry or use the official portal.');
- return {account,records,summary,source:SOURCE,fetchedAt:new Date().toISOString(),range:{from:input.from,to:input.to},readingAvailability:{previousReading:false,currentReading:false,consumedUnits:summary.months.some(r=>r.consumedUnits!==null)},note:'NEA exposes billed consumed units, not cumulative meter readings. Blank upstream values are returned as null. VAT and arrears are separate bill rows; payment receipts are separate payment rows.'};
+ return {account,records,summary,source:SOURCE,fetchedAt:new Date().toISOString(),range:{from:input.from,to:input.to},readingAvailability:{previousReading:false,currentReading:false,consumedUnits:summary.months.some(r=>r.consumedUnits!==null)},note:'NEA exposes billed consumed units, not cumulative meter readings. Blank upstream values are returned as null. VAT and arrears are separate bill rows; payment receipts are separate payment rows. Advance and balance information is preserved separately from bill/payment totals.'};
 }
 export function validate(body) {
  const consumerId=String(body.consumerId??'').trim(), scNo=String(body.scNo??'').trim(), branch=String(body.branch??'').trim();
@@ -402,16 +412,17 @@ export async function lookup(input) {
 
 ```javascript
 // Derived views preserve NEA rows. Never estimate VAT or allocate shared receipts.
-const cents=n=>Math.round(n*100);
-export const sumMoney=values=>values.some(n=>n===null)?null:values.reduce((s,n)=>s+cents(n),0)/100;
+const moneyUnits=n=>Math.round(n*10000);
+export const sumMoney=values=>values.some(n=>n===null)?null:values.reduce((s,n)=>s+moneyUnits(n),0)/10000;
 export function billISO(value) {
  const m=value?.match(/^(\d{1,2})-([A-Z]{3})-(\d{2}|\d{4})$/i);if(!m)return null;
  const month=['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'].indexOf(m[2].toUpperCase())+1;if(!month)return null;
  const y=m[3].length===2?2000+Number(m[3]):Number(m[3]);const date=`${y}-${String(month).padStart(2,'0')}-${m[1].padStart(2,'0')}`;
  return new Date(date).toISOString().slice(0,10)===date?date:null;
 }
-const key=r=>r.transactionId&&r.paidDate?r.transactionId+'|'+r.paidDate:null;
-export function analyze(records,sourceTotals,scNo) {
+const rowId=r=>(r.statementGroup??'legacy')+':'+r.sequence;
+const key=r=>r.transactionId&&r.paidDate?(r.statementGroup??'legacy')+'|'+r.transactionId+'|'+r.paidDate:null;
+export function analyze(records,sourceTotals,scNo,groups=[]) {
  const monthly=records.filter(r=>r.category==='monthly');
  const extras=records.filter(r=>r.kind==='bill'&&r.category!=='monthly');
  const transactions=new Map();
@@ -421,21 +432,38 @@ export function analyze(records,sourceTotals,scNo) {
   const group=key(r)?transactions.get(key(r)):[];
   const uniqueMonth=group?.filter(x=>x.category==='monthly').length===1;
   const related=uniqueMonth?group.filter(x=>x.kind==='bill'&&x.category!=='monthly'):[];
-  related.forEach(x=>assigned.add(x.sequence));
+  related.forEach(x=>assigned.add(rowId(x)));
   const vat=related.filter(x=>x.category==='vat'),other=related.filter(x=>x.category!=='vat');
   const receipts=uniqueMonth?group.filter(x=>x.kind==='payment'):[];
-  const adjustmentAmount=r.billAmount!==null&&r.payableAmount!==null?(cents(r.payableAmount)-cents(r.billAmount))/100:null;
+  const adjustmentAmount=r.billAmount!==null&&r.payableAmount!==null?(moneyUnits(r.payableAmount)-moneyUnits(r.billAmount))/10000:null;
   const totalPayable=sumMoney([r.payableAmount,...related.map(x=>x.payableAmount)]);
   const paid=receipts.length===1?receipts[0].paidAmount:null;
-  return {sequence:r.sequence,period:r.period,billDate:r.billDate,billDateISO:billISO(r.billDate),consumedUnits:r.consumedUnits,baseAmount:r.billAmount,adjustment:r.adjustment,adjustmentRate:r.rate,adjustmentAmount,adjustedBaseAmount:r.payableAmount,vatAmount:sumMoney(vat.map(x=>x.billAmount)),vatPayable:sumMoney(vat.map(x=>x.payableAmount)),vatPresent:vat.length>0,otherCharges:sumMoney(other.map(x=>x.payableAmount)),totalPayable,paidAmount:paid,paymentDifference:paid!==null&&totalPayable!==null?(cents(paid)-cents(totalPayable))/100:null,status:r.status,transactionId:r.transactionId,paidDate:r.paidDate,sourceSequences:[r.sequence,...related.map(x=>x.sequence)],receiptSequence:receipts.length===1?receipts[0].sequence:null,association:uniqueMonth?'single-month transaction':'monthly row only; no unique transaction allocation'};
+  return {sequence:r.sequence,statementGroup:r.statementGroup??null,period:r.period,billDate:r.billDate,billDateISO:billISO(r.billDate),consumedUnits:r.consumedUnits,baseAmount:r.billAmount,adjustment:r.adjustment,adjustmentRate:r.rate,adjustmentAmount,adjustedBaseAmount:r.payableAmount,vatAmount:sumMoney(vat.map(x=>x.billAmount)),vatPayable:sumMoney(vat.map(x=>x.payableAmount)),vatPresent:vat.length>0,otherCharges:sumMoney(other.map(x=>x.payableAmount)),totalPayable,paidAmount:paid,paymentDifference:paid!==null&&totalPayable!==null?(moneyUnits(paid)-moneyUnits(totalPayable))/10000:null,status:r.status,transactionId:r.transactionId,paidDate:r.paidDate,sourceSequences:[r.sequence,...related.map(x=>x.sequence)],receiptSequence:receipts.length===1?receipts[0].sequence:null,association:uniqueMonth?'single-month transaction':'monthly row only; no unique transaction allocation'};
  }).sort((a,b)=>(a.billDateISO??'').localeCompare(b.billDateISO??'')||a.sequence-b.sequence);
  const totals={billAmount:sumMoney(records.filter(r=>r.kind==='bill').map(r=>r.billAmount)),payableAmount:sumMoney(records.filter(r=>r.kind==='bill').map(r=>r.payableAmount)),paidAmount:sumMoney(records.filter(r=>r.kind==='payment').map(r=>r.paidAmount))};
- const mismatches=sourceTotals?Object.keys(totals).filter(k=>sourceTotals[k]!==null&&(totals[k]===null||cents(totals[k])!==cents(sourceTotals[k]))):[];
- const paidDifference=totals.paidAmount!==null&&totals.payableAmount!==null?(cents(totals.paidAmount)-cents(totals.payableAmount))/100:null;
+ let mismatches=sourceTotals?Object.keys(totals).filter(k=>sourceTotals[k]!==null&&(totals[k]===null||moneyUnits(totals[k])!==moneyUnits(sourceTotals[k]))):[];
+ const statementGroups=groups.map(g=>{
+  const computedTotals=Object.fromEntries(['billAmount','payableAmount','paidAmount'].map(field=>{
+   const values=g.records.map(r=>r[field]).filter(n=>n!==null);
+   return [field,values.length?sumMoney(values):0];
+  }));
+  const fields=g.sourceTotals?Object.keys(computedTotals).filter(field=>g.sourceTotals[field]!==null&&(computedTotals[field]===null||moneyUnits(computedTotals[field])!==moneyUnits(g.sourceTotals[field]))):[];
+  return {id:g.id,status:g.status||g.records[0]?.status||null,billing:g.records.length===0||g.records.some(r=>r.kind!=='balance'),recordSequences:g.records.map(r=>r.sequence),sourceTotals:g.sourceTotals,computedTotals,mismatches:fields};
+ });
+ if(groups.length){
+  mismatches=statementGroups.flatMap(g=>g.mismatches.map(field=>'section '+g.id+': '+field));
+  const billingGroups=groups.filter(g=>g.records.length===0||g.records.some(r=>r.kind!=='balance'));
+  const haveSeparateControls=billingGroups.length>0&&billingGroups.every(g=>g.sourceTotals&&g.records.every(r=>r.kind!=='balance'));
+  sourceTotals=haveSeparateControls?Object.fromEntries(['billAmount','payableAmount','paidAmount'].map(field=>{
+   const values=billingGroups.map(g=>g.sourceTotals[field]).filter(n=>n!==null);
+   return [field,values.length?sumMoney(values):null];
+  })):null;
+ }
+ const paidDifference=totals.paidAmount!==null&&totals.payableAmount!==null?(moneyUnits(totals.paidAmount)-moneyUnits(totals.payableAmount))/10000:null;
  const reportedMonths=months.filter(m=>m.consumedUnits!==null);
  const consumption={totalReportedUnits:reportedMonths.length?reportedMonths.reduce((total,m)=>total+m.consumedUnits,0):null,reportedMonthlyBills:reportedMonths.length,missingMonthlyBills:months.length-reportedMonths.length,firstReportedPeriod:reportedMonths[0]?.period??null,lastReportedPeriod:reportedMonths.at(-1)?.period??null,complete:months.length>0&&reportedMonths.length===months.length};
  const middle=scNo.match(/^\d+[.\/-](\d{1,2})[.\/-]/)?.[1];const scheduledReadingDay=middle&&Number(middle)>=1&&Number(middle)<=32?Number(middle):null;
- return {months,consumption,totals,sourceTotals,paidDifference,sourceTotalMismatches:mismatches,unallocatedCharges:extras.filter(x=>!assigned.has(x.sequence)),scheduledReadingDay};
+ return {months,consumption,totals,sourceTotals,statementGroups,balanceRecords:records.filter(r=>r.kind==='balance'),paidDifference,sourceTotalMismatches:mismatches,unallocatedCharges:extras.filter(x=>!assigned.has(rowId(x))),scheduledReadingDay};
 }
 ```
 
@@ -924,7 +952,8 @@ export function apiSpecification(){return {
             "type": "string",
             "enum": [
               "bill",
-              "payment"
+              "payment",
+              "balance"
             ]
           },
           "category": {
@@ -934,11 +963,17 @@ export function apiSpecification(){return {
               "vat",
               "arrears",
               "receipt",
-              "other"
+              "other",
+              "advance",
+              "balance"
             ]
           },
           "status": {
             "type": "string"
+          },
+          "statementGroup": {
+            "type": "integer",
+            "description": "Section containing this original row; use with sequence to identify rows within a snapshot."
           }
         }
       },
@@ -1073,6 +1108,12 @@ export function apiSpecification(){return {
               "integer",
               "null"
             ]
+          },
+          "statementGroup": {
+            "type": [
+              "integer",
+              "null"
+            ]
           }
         }
       },
@@ -1174,7 +1215,8 @@ export function apiSpecification(){return {
                   {
                     "type": "null"
                   }
-                ]
+                ],
+                "description": "Aggregated reported controls for separate billing sections; null if no separate billing controls are supplied. Original section controls remain in statementGroups."
               },
               "paidDifference": {
                 "type": [
@@ -1199,6 +1241,18 @@ export function apiSpecification(){return {
                   "integer",
                   "null"
                 ]
+              },
+              "statementGroups": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/StatementGroup"
+                }
+              },
+              "balanceRecords": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Record"
+                }
               }
             }
           },
@@ -1243,6 +1297,48 @@ export function apiSpecification(){return {
             "type": "string"
           }
         }
+      },
+      "StatementGroup": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "status": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "billing": {
+            "type": "boolean"
+          },
+          "recordSequences": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            }
+          },
+          "sourceTotals": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Totals"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "computedTotals": {
+            "$ref": "#/components/schemas/Totals"
+          },
+          "mismatches": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
       }
     }
   }
@@ -1252,7 +1348,7 @@ export function apiSpecification(){return {
 ## Source: documentation.mjs
 
 ```javascript
-export const API_DOCS_HTML="<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>NEA Billing \u00b7 Public API</title><meta name=\"description\" content=\"Public, read-only NEA billing API. Fetch branches, billed consumption and verified statement history.\"><style>:root{font-family:system-ui,sans-serif;color:#173c32;background:#f3f7f3}*{box-sizing:border-box}body{margin:0}main{max-width:980px;margin:auto;padding:45px 24px}h1{font-size:38px;letter-spacing:-1.5px}h2{font-size:22px;margin-top:32px}p,li{line-height:1.8;color:#52715e}a{color:#17684d}section{background:white;border:1px solid #dbe7da;border-radius:14px;padding:23px;margin:20px 0}code,pre{font-family:ui-monospace,monospace;font-size:13px}pre{background:#163b30;color:#edf5e9;border-radius:10px;padding:18px;overflow:auto;line-height:1.7}.method{font-size:11px;color:#3d805b;background:#edf4e8;border-radius:5px;padding:5px 8px;margin-right:8px}table{border-collapse:collapse;width:100%;font-size:13px}th,td{text-align:left;padding:12px;border-bottom:1px solid #e6eee3}th{color:#709065;font-weight:500}.actions{display:flex;flex-wrap:wrap;gap:15px}.note{font-size:13px}footer{padding:25px 0;color:#789076;font-size:12px}.endpoint{overflow-wrap:anywhere}@media(max-width:600px){h1{font-size:30px}section{padding:18px}td,th{padding:9px}table{font-size:12px}}</style></head><body><main><a href=\"/\">\u2190 NEA Billing app</a><h1>NEA Billing Public API</h1><p>Fetch NEA branches, monthly consumed units, bills and payment history from one Cloudflare-hosted service. No API key or login is required.</p><div class=\"actions\"><a href=\"/api/v1/openapi.json\">OpenAPI specification \u2197</a><a href=\"/api/v1/branches\">View branch directory \u2197</a><a href=\"/api/v1/health\">API health \u2197</a></div><p>Base URL: <code id=\"base-url\"></code></p><section><h2><span class=\"method\">GET</span><code class=\"endpoint\">/api/v1/branches</code></h2><p>Returns the current NEA branch directory. Use the branch\u2019s string <code>id</code> in lookup requests. Damauli DC is <code>241</code>.</p><pre id=\"branches-example\"></pre></section><section><h2><span class=\"method\">POST</span><code class=\"endpoint\">/api/v1/readings</code></h2><p>Send <code>Content-Type: application/json</code> with these five fields. Dates use Gregorian ISO format; statement period labels use Nepali BS.</p><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody><tr><td><code>consumerId</code></td><td>Consumer ID as a string</td></tr><tr><td><code>scNo</code></td><td>Service connection number, including separators</td></tr><tr><td><code>branch</code></td><td>NEA branch ID as a string</td></tr><tr><td><code>from</code></td><td>Starting date: YYYY-MM-DD</td></tr><tr><td><code>to</code></td><td>Ending date: YYYY-MM-DD</td></tr></tbody></table><p class=\"note\">Example identifiers below are placeholders. Replace them with details for a connection you are authorized to query.</p><pre id=\"curl-example\"></pre><h2>JavaScript / browser</h2><pre id=\"javascript-example\"></pre></section><section><h2>Reading the response</h2><ul><li><code>account</code>: NEA account details checked against the requested ID and SC number.</li><li><code>records</code>: original statement rows, including bills, VAT, arrears and receipt rows.</li><li><code>summary.months</code>: monthly consumed units and payable breakdowns.</li><li><code>summary.consumption</code>: total reported units, reporting coverage and first/last reported month.</li><li><code>summary.totals</code> and <code>summary.sourceTotals</code>: reconciled statement totals.</li><li><code>fetchedAt</code> and <code>range</code>: lookup time and requested date range.</li></ul><p>Missing consumed units remain <code>null</code>, not zero. Amounts are NPR. Preserve recorded VAT and payable amounts rather than calculating a universal 13% addition. Payment receipts are counted once; shared receipts are not assigned arbitrarily to monthly bills. Previous/current cumulative meter readings are not exposed by the upstream portal.</p></section><section><h2>Limits and errors</h2><p>Data endpoints allow approximately 30 requests per minute per client IP per Cloudflare location. The web app and public API share the limit. Clients behind the same network share capacity. Health, documentation, specification and CORS preflight requests do not count. No customer statements are saved or cached.</p><p>Lookup bodies are limited to 4 KB, date ranges to approximately three years, and NEA requests time out after 25 seconds. Browser cross-origin requests are supported without cookies.</p><table><thead><tr><th>Status</th><th>Meaning</th></tr></thead><tbody><tr><td>400</td><td>Invalid JSON or account/date input</td></tr><tr><td>404 / 405</td><td>Unknown endpoint / wrong method</td></tr><tr><td>413 / 415</td><td>Body too large / JSON Content-Type required</td></tr><tr><td>429</td><td>Rate limit reached; wait the Retry-After seconds</td></tr><tr><td>502</td><td>NEA failed, account could not be verified, or statement totals changed</td></tr><tr><td>503</td><td>Request limiting temporarily unavailable</td></tr></tbody></table><p>Public errors include <code>error</code>, <code>code</code> and <code>requestId</code>. The <code>X-Request-ID</code> response header identifies the request. A successful health response checks this API, not NEA\u2019s availability.</p></section><footer>Independent service, not an official NEA API. Results depend on NEA\u2019s public billing portal. Source: <a href=\"https://www.neabilling.com/viewonline/\">NEA billing</a>.</footer></main><script>\nconst base=location.origin;document.getElementById('base-url').textContent=base;document.getElementById('branches-example').textContent='curl '+base+'/api/v1/branches';const details={consumerId:'12345',scNo:'001.19.001',branch:'241',from:'2026-03-01',to:'2026-10-13'};document.getElementById('curl-example').textContent='curl '+base+'/api/v1/readings \\\\\\n  -H \"Content-Type: application/json\" \\\\\\n  --data '+\"'\"+JSON.stringify(details)+\"'\";document.getElementById('javascript-example').textContent='const response = await fetch(\"'+base+'/api/v1/readings\", {\\n  method: \"POST\",\\n  headers: { \"Content-Type\": \"application/json\" },\\n  body: JSON.stringify('+JSON.stringify(details,null,2)+')\\n});\\nconst data = await response.json();\\nif (!response.ok) throw new Error(data.error);\\nconsole.log(data.summary.months);';\n</script></body></html>\n";
+export const API_DOCS_HTML="<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>NEA Billing \u00b7 Public API</title><meta name=\"description\" content=\"Public, read-only NEA billing API. Fetch branches, billed consumption and verified statement history.\"><style>:root{font-family:system-ui,sans-serif;color:#173c32;background:#f3f7f3}*{box-sizing:border-box}body{margin:0}main{max-width:980px;margin:auto;padding:45px 24px}h1{font-size:38px;letter-spacing:-1.5px}h2{font-size:22px;margin-top:32px}p,li{line-height:1.8;color:#52715e}a{color:#17684d}section{background:white;border:1px solid #dbe7da;border-radius:14px;padding:23px;margin:20px 0}code,pre{font-family:ui-monospace,monospace;font-size:13px}pre{background:#163b30;color:#edf5e9;border-radius:10px;padding:18px;overflow:auto;line-height:1.7}.method{font-size:11px;color:#3d805b;background:#edf4e8;border-radius:5px;padding:5px 8px;margin-right:8px}table{border-collapse:collapse;width:100%;font-size:13px}th,td{text-align:left;padding:12px;border-bottom:1px solid #e6eee3}th{color:#709065;font-weight:500}.actions{display:flex;flex-wrap:wrap;gap:15px}.note{font-size:13px}footer{padding:25px 0;color:#789076;font-size:12px}.endpoint{overflow-wrap:anywhere}@media(max-width:600px){h1{font-size:30px}section{padding:18px}td,th{padding:9px}table{font-size:12px}}</style></head><body><main><a href=\"/\">\u2190 NEA Billing app</a><h1>NEA Billing Public API</h1><p>Fetch NEA branches, monthly consumed units, bills and payment history from one Cloudflare-hosted service. No API key or login is required.</p><div class=\"actions\"><a href=\"/api/v1/openapi.json\">OpenAPI specification \u2197</a><a href=\"/api/v1/branches\">View branch directory \u2197</a><a href=\"/api/v1/health\">API health \u2197</a></div><p>Base URL: <code id=\"base-url\"></code></p><section><h2><span class=\"method\">GET</span><code class=\"endpoint\">/api/v1/branches</code></h2><p>Returns the current NEA branch directory. Use the branch\u2019s string <code>id</code> in lookup requests. Damauli DC is <code>241</code>.</p><pre id=\"branches-example\"></pre></section><section><h2><span class=\"method\">POST</span><code class=\"endpoint\">/api/v1/readings</code></h2><p>Send <code>Content-Type: application/json</code> with these five fields. Dates use Gregorian ISO format; statement period labels use Nepali BS.</p><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody><tr><td><code>consumerId</code></td><td>Consumer ID as a string</td></tr><tr><td><code>scNo</code></td><td>Service connection number, including separators</td></tr><tr><td><code>branch</code></td><td>NEA branch ID as a string</td></tr><tr><td><code>from</code></td><td>Starting date: YYYY-MM-DD</td></tr><tr><td><code>to</code></td><td>Ending date: YYYY-MM-DD</td></tr></tbody></table><p class=\"note\">Example identifiers below are placeholders. Replace them with details for a connection you are authorized to query.</p><pre id=\"curl-example\"></pre><h2>JavaScript / browser</h2><pre id=\"javascript-example\"></pre></section><section><h2>Reading the response</h2><ul><li><code>account</code>: NEA account details checked against the requested ID and SC number.</li><li><code>records</code>: original statement rows, including bills, VAT, arrears, receipts and advance/balance information.</li><li><code>summary.months</code>: monthly consumed units and payable breakdowns.</li><li><code>summary.consumption</code>: total reported units, reporting coverage and first/last reported month.</li><li><code>summary.statementGroups</code>: each NEA section, its original subtotal and reconciliation result.</li><li><code>summary.balanceRecords</code>: advance/balance rows kept outside billed and paid totals.</li><li><code>summary.totals</code> and <code>summary.sourceTotals</code>: billing/payment totals reconciled with their matching section controls.</li><li><code>fetchedAt</code> and <code>range</code>: lookup time and requested date range.</li></ul><p>Missing consumed units remain <code>null</code>, not zero. Amounts are NPR. Preserve recorded VAT and payable amounts rather than calculating a universal 13% addition. Payment receipts are counted once; shared receipts are not assigned arbitrarily to monthly bills. Previous/current cumulative meter readings are not exposed by the upstream portal.</p></section><section><h2>Limits and errors</h2><p>Data endpoints allow approximately 30 requests per minute per client IP per Cloudflare location. The web app and public API share the limit. Clients behind the same network share capacity. Health, documentation, specification and CORS preflight requests do not count. No customer statements are saved or cached.</p><p>Lookup bodies are limited to 4 KB, date ranges to approximately three years, and NEA requests time out after 25 seconds. Browser cross-origin requests are supported without cookies.</p><table><thead><tr><th>Status</th><th>Meaning</th></tr></thead><tbody><tr><td>400</td><td>Invalid JSON or account/date input</td></tr><tr><td>404 / 405</td><td>Unknown endpoint / wrong method</td></tr><tr><td>413 / 415</td><td>Body too large / JSON Content-Type required</td></tr><tr><td>429</td><td>Rate limit reached; wait the Retry-After seconds</td></tr><tr><td>502</td><td>NEA failed, account could not be verified, or statement totals changed</td></tr><tr><td>503</td><td>Request limiting temporarily unavailable</td></tr></tbody></table><p>Public errors include <code>error</code>, <code>code</code> and <code>requestId</code>. The <code>X-Request-ID</code> response header identifies the request. A successful health response checks this API, not NEA\u2019s availability.</p></section><footer>Independent service, not an official NEA API. Results depend on NEA\u2019s public billing portal. Source: <a href=\"https://www.neabilling.com/viewonline/\">NEA billing</a>.</footer></main><script>\nconst base=location.origin;document.getElementById('base-url').textContent=base;document.getElementById('branches-example').textContent='curl '+base+'/api/v1/branches';const details={consumerId:'12345',scNo:'001.19.001',branch:'241',from:'2026-03-01',to:'2026-10-13'};document.getElementById('curl-example').textContent='curl '+base+'/api/v1/readings \\\\\\n  -H \"Content-Type: application/json\" \\\\\\n  --data '+\"'\"+JSON.stringify(details)+\"'\";document.getElementById('javascript-example').textContent='const response = await fetch(\"'+base+'/api/v1/readings\", {\\n  method: \"POST\",\\n  headers: { \"Content-Type\": \"application/json\" },\\n  body: JSON.stringify('+JSON.stringify(details,null,2)+')\\n});\\nconst data = await response.json();\\nif (!response.ok) throw new Error(data.error);\\nconsole.log(data.summary.months);';\n</script></body></html>\n";
 ```
 
 ## Source: worker.mjs
@@ -1339,9 +1435,9 @@ function drawRows(){const records=view==='monthly'?data.summary.months:view==='p
 function dl(container,items){const list=document.createElement('dl');items.forEach(([label,value,grand])=>{const row=document.createElement('div');if(grand)row.className='grand';const dt=document.createElement('dt'),dd=document.createElement('dd');dt.textContent=label;dd.textContent=value;row.append(dt,dd);list.append(row)});container.append(list)}
 function monthBreakdown(){const m=data.summary.months[Number($('month').value)];$('breakdown').replaceChildren();if(!m){$('breakdown').textContent='No monthly bills returned.';return}dl($('breakdown'),[['Consumed units · kWh',m.consumedUnits===null?'Not reported by NEA':fmt(m.consumedUnits)],['Base bill',fmt(m.baseAmount)],[m.adjustment==='PENALTY'?'Penalty ('+m.adjustmentRate+'%)':m.adjustment==='REBATE'?'Rebate ('+m.adjustmentRate+'%)':'Adjustment',(m.adjustmentAmount>0?'+':'')+fmt(m.adjustmentAmount)],['Base after adjustment',fmt(m.adjustedBaseAmount)],['VAT billed',m.vatPresent?fmt(m.vatAmount):'None recorded'],['VAT payable',m.vatPresent?fmt(m.vatPayable):'None recorded'],['Other / arrears payable',fmt(m.otherCharges)],['Total payable',fmt(m.totalPayable),true]]);const right=document.createElement('div');dl(right,[['Bill date · AD',m.billDate||'—'],['Paid date · AD',m.paidDate||'—'],['Receipt paid',m.paidAmount===null?'Not uniquely allocated':fmt(m.paidAmount)],['Paid minus payable',m.paymentDifference===null?'Not uniquely allocated':fmt(m.paymentDifference)],['Statement status',m.status]]);const note=document.createElement('p');note.className='statement-label';note.textContent='Source rows '+m.sourceSequences.join(', ')+(m.receiptSequence?' · receipt row '+m.receiptSequence:'')+'. '+(m.vatPresent?'VAT billed and VAT payable differ because NEA supplies separate decimal and rounded amounts. ':'')+'Rebate/penalty amounts use the difference recorded by NEA, including rounding. A receipt covering several months is not allocated to one month.';right.append(note);$('breakdown').append(right)}
 $('month').addEventListener('change',monthBreakdown);
-function render(){const summary=data.summary,monthly=summary.months,latest=monthly.at(-1);$('account-name').textContent=data.account.name||'Your NEA connection';$('account-details').textContent=data.account.location+' · Consumer '+data.account.consumerId+' · SC '+data.account.scNo;$('units').textContent=latest&&latest.consumedUnits!==null?fmt(latest.consumedUnits):'—';$('units-period').textContent=latest?latest.period+(latest.consumedUnits===null?' · Not reported by NEA':''):'No monthly bill returned';$('bill').textContent=latest?fmt(latest.totalPayable):'—';$('bill-period').textContent=latest?latest.period+' · '+latest.status+' · Includes linked VAT & charges':'No monthly bill returned';$('count').textContent=monthly.length;const missing=monthly.filter(r=>r.consumedUnits===null).length;$('availability').textContent='Units are billed consumption, not cumulative meter readings.'+(missing?' NEA leaves units blank for '+missing+' monthly bill(s).':'')+' Monthly totals include VAT/arrears only where the transaction identifies one month.'+(summary.unallocatedCharges.length?' '+summary.unallocatedCharges.length+' extra charge row(s) cannot be uniquely allocated; inspect source rows.':'');$('month').replaceChildren(...monthly.map((m,i)=>{const o=document.createElement('option');o.value=i;o.textContent=m.period+' · '+(m.billDate||'No bill date');return o}));$('month').value=monthly.length-1;monthBreakdown();const consumption=summary.consumption;$('consumption-overview').replaceChildren();const consumptionTitle=document.createElement('h2');consumptionTitle.textContent='Consumed units reported by NEA';$('consumption-overview').append(consumptionTitle);dl($('consumption-overview'),[['Total reported consumption · kWh',fmt(consumption.totalReportedUnits)],['Monthly bills with consumed units',consumption.reportedMonthlyBills+' of '+monthly.length],['First reported month in this range',consumption.firstReportedPeriod||'Not reported by NEA']]);const consumptionNote=document.createElement('p');consumptionNote.className='statement-label';consumptionNote.textContent=consumption.complete?'All monthly bills in this range report consumed units.':consumption.missingMonthlyBills?'NEA did not report consumed units for '+consumption.missingMonthlyBills+' earlier or other monthly bill(s) in this range. The total includes reported monthly units only; missing values are not counted as zero.':'No monthly bills returned for this range.';$('consumption-overview').append(consumptionNote);const unitRows=monthly.filter(r=>r.consumedUnits!==null).slice(-6);$('chart').hidden=!unitRows.length;$('chart').replaceChildren();if(unitRows.length){const max=Math.max(1,...unitRows.map(r=>r.consumedUnits));unitRows.forEach(r=>{const col=document.createElement('div');col.className='bar-col';const b=document.createElement('b');b.textContent=fmt(r.consumedUnits);const bar=document.createElement('div');bar.className='bar';bar.style.height=(r.consumedUnits/max*76)+'px';const span=document.createElement('span');span.textContent=r.period.split('/')[0];col.append(b,bar,span);$('chart').append(col)});$('chart').setAttribute('aria-label',unitRows.map(r=>r.period+': '+r.consumedUnits+' units').join('; '))}$('totals').replaceChildren();const title=document.createElement('h2');title.textContent='Statement reconciliation · NPR';$('totals').append(title);dl($('totals'),[['Total billed (including VAT & arrears)',fmt(summary.totals.billAmount)],['Total payable after adjustments',fmt(summary.totals.payableAmount)],['Total paid (receipts counted once)',fmt(summary.totals.paidAmount)],['Paid minus payable',fmt(summary.paidDifference)]]);const note=document.createElement('p');note.className='statement-label';note.textContent=(summary.sourceTotals?'All three totals match NEA’s TOTAL row.':'NEA did not supply a TOTAL row; totals are sums of returned records.')+(summary.paidDifference?' The paid/payable difference is present in NEA’s records; it is not automatically treated as credit, a fee or an unpaid balance.':'');$('totals').append(note);$('schedule-guide').textContent=summary.scheduledReadingDay?'SC reading group '+summary.scheduledReadingDay+': expected reading on the '+summary.scheduledReadingDay+'th of each Nepali month. Use the actual meter-reading/bill date for payment windows; statement bill dates and the date filter are Gregorian (AD), while bill periods are Nepali (BS).':'Use the actual meter-reading/bill date for payment windows. Bill periods use BS; statement dates and date filters use AD.';$('updated').textContent='Fetched '+new Date(data.fetchedAt).toLocaleString()+' · '+data.range.from+' to '+data.range.to+' (AD) · '+data.records.length+' source rows';$('result').hidden=false;$('empty').hidden=true;drawRows()}
+function render(){const summary=data.summary,monthly=summary.months,latest=monthly.at(-1);$('account-name').textContent=data.account.name||'Your NEA connection';$('account-details').textContent=data.account.location+' · Consumer '+data.account.consumerId+' · SC '+data.account.scNo;$('units').textContent=latest&&latest.consumedUnits!==null?fmt(latest.consumedUnits):'—';$('units-period').textContent=latest?latest.period+(latest.consumedUnits===null?' · Not reported by NEA':''):'No monthly bill returned';$('bill').textContent=latest?fmt(latest.totalPayable):'—';$('bill-period').textContent=latest?latest.period+' · '+latest.status+' · Includes linked VAT & charges':'No monthly bill returned';$('count').textContent=monthly.length;const missing=monthly.filter(r=>r.consumedUnits===null).length;$('availability').textContent='Units are billed consumption, not cumulative meter readings.'+(missing?' NEA leaves units blank for '+missing+' monthly bill(s).':'')+' Monthly totals include VAT/arrears only where the transaction identifies one month.'+(summary.unallocatedCharges.length?' '+summary.unallocatedCharges.length+' extra charge row(s) cannot be uniquely allocated; inspect source rows.':'');$('month').replaceChildren(...monthly.map((m,i)=>{const o=document.createElement('option');o.value=i;o.textContent=m.period+' · '+(m.billDate||'No bill date');return o}));$('month').value=monthly.length-1;monthBreakdown();const consumption=summary.consumption;$('consumption-overview').replaceChildren();const consumptionTitle=document.createElement('h2');consumptionTitle.textContent='Consumed units reported by NEA';$('consumption-overview').append(consumptionTitle);dl($('consumption-overview'),[['Total reported consumption · kWh',fmt(consumption.totalReportedUnits)],['Monthly bills with consumed units',consumption.reportedMonthlyBills+' of '+monthly.length],['First reported month in this range',consumption.firstReportedPeriod||'Not reported by NEA']]);const consumptionNote=document.createElement('p');consumptionNote.className='statement-label';consumptionNote.textContent=consumption.complete?'All monthly bills in this range report consumed units.':consumption.missingMonthlyBills?'NEA did not report consumed units for '+consumption.missingMonthlyBills+' earlier or other monthly bill(s) in this range. The total includes reported monthly units only; missing values are not counted as zero.':'No monthly bills returned for this range.';$('consumption-overview').append(consumptionNote);const unitRows=monthly.filter(r=>r.consumedUnits!==null).slice(-6);$('chart').hidden=!unitRows.length;$('chart').replaceChildren();if(unitRows.length){const max=Math.max(1,...unitRows.map(r=>r.consumedUnits));unitRows.forEach(r=>{const col=document.createElement('div');col.className='bar-col';const b=document.createElement('b');b.textContent=fmt(r.consumedUnits);const bar=document.createElement('div');bar.className='bar';bar.style.height=(r.consumedUnits/max*76)+'px';const span=document.createElement('span');span.textContent=r.period.split('/')[0];col.append(b,bar,span);$('chart').append(col)});$('chart').setAttribute('aria-label',unitRows.map(r=>r.period+': '+r.consumedUnits+' units').join('; '))}$('totals').replaceChildren();const title=document.createElement('h2');title.textContent='Statement reconciliation · NPR';$('totals').append(title);dl($('totals'),[['Total billed (including VAT & arrears)',fmt(summary.totals.billAmount)],['Total payable after adjustments',fmt(summary.totals.payableAmount)],['Total paid (receipts counted once)',fmt(summary.totals.paidAmount)],['Paid minus payable',fmt(summary.paidDifference)]]);const note=document.createElement('p');note.className='statement-label';const checkedSections=(summary.statementGroups||[]).filter(g=>g.sourceTotals);note.textContent=(checkedSections.length?'Parsed rows reconcile with '+checkedSections.length+' NEA section subtotal(s). Advance/balance information is excluded from billed and paid totals.':summary.sourceTotals?'Transaction totals match NEA’s billing TOTAL row.':'NEA did not supply control totals; totals are calculated from returned transactions.')+(summary.paidDifference?' The paid/payable difference is present in NEA’s records; it is not automatically treated as credit, a fee or an unpaid balance.':'');$('totals').append(note);if(summary.balanceRecords?.length){const balanceTitle=document.createElement('h3');balanceTitle.textContent='NEA advance / balance information';$('totals').append(balanceTitle);dl($('totals'),summary.balanceRecords.map(r=>[r.period||r.status,fmt(r.billAmount)]));const balanceNote=document.createElement('p');balanceNote.className='statement-label';balanceNote.textContent='These are NEA’s reported balance rows, not additional monthly bills or payment receipts. The original section totals remain available in the API and all rows in the source view.';$('totals').append(balanceNote);}$('schedule-guide').textContent=summary.scheduledReadingDay?'SC reading group '+summary.scheduledReadingDay+': expected reading on the '+summary.scheduledReadingDay+'th of each Nepali month. Use the actual meter-reading/bill date for payment windows; statement bill dates and the date filter are Gregorian (AD), while bill periods are Nepali (BS).':'Use the actual meter-reading/bill date for payment windows. Bill periods use BS; statement dates and date filters use AD.';$('updated').textContent='Fetched '+new Date(data.fetchedAt).toLocaleString()+' · '+data.range.from+' to '+data.range.to+' (AD) · '+data.records.length+' source rows';$('result').hidden=false;$('empty').hidden=true;drawRows()}
 $('lookup').addEventListener('submit',async e=>{e.preventDefault();$('error').hidden=true;$('result').hidden=true;$('empty').hidden=false;data=null;if($('from').value>$('to').value){$('error').textContent='From date must come before to date.';$('error').hidden=false;return;}const b=$('submit');b.disabled=true;b.innerHTML='<span class="loader" aria-hidden="true"></span>Fetching from NEA…';$('empty').setAttribute('aria-busy','true');try{data=await fetch('/api/readings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.fromEntries(new FormData(e.target)))}).then(readJson);view='monthly';render()}catch(err){$('error').textContent=err.message;$('error').hidden=false}finally{b.disabled=false;b.textContent='Fetch statement ↗';$('empty').setAttribute('aria-busy','false')}});
-$('reset').onclick=()=>{data=null;$('consumer').value='';$('sc').value='';$('result').hidden=true;$('empty').hidden=false;$('error').hidden=true;showSchedule();$('consumer').focus()};$('bills-tab').onclick=()=>{view='monthly';drawRows()};$('payments-tab').onclick=()=>{view='payment';drawRows()};$('source-tab').onclick=()=>{view='source';drawRows()};$('export').onclick=()=>{if(!data)return;const fields=['sequence','kind','category','period','billDate','consumedUnits','billAmount','adjustment','rate','payableAmount','status','paidAmount','merchant','transactionId','paidDate'];const cell=v=>'"'+String(v??'').replace(/^[=+@-]/,"'$&").replace(/"/g,'""')+'"';const csv=[fields.join(','),...data.records.map(r=>fields.map(k=>cell(r[k])).join(','))].join('\r\n');const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download='nea-statement-'+data.range.from+'-'+data.range.to+'.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)};
+$('reset').onclick=()=>{data=null;$('consumer').value='';$('sc').value='';$('result').hidden=true;$('empty').hidden=false;$('error').hidden=true;showSchedule();$('consumer').focus()};$('bills-tab').onclick=()=>{view='monthly';drawRows()};$('payments-tab').onclick=()=>{view='payment';drawRows()};$('source-tab').onclick=()=>{view='source';drawRows()};$('export').onclick=()=>{if(!data)return;const fields=['sequence','statementGroup','kind','category','period','billDate','consumedUnits','billAmount','adjustment','rate','payableAmount','status','paidAmount','merchant','transactionId','paidDate'];const cell=v=>'"'+String(v??'').replace(/^[=+@-]/,"'$&").replace(/"/g,'""')+'"';const csv=[fields.join(','),...data.records.map(r=>fields.map(k=>cell(r[k])).join(','))].join('\r\n');const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download='nea-statement-'+data.range.from+'-'+data.range.to+'.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)};
 </script></body></html>
 ```
 
@@ -1448,4 +1544,12 @@ test('Documentation, health and OpenAPI work without NEA or rate-limit capacity'
 test('Public lookup verifies account and returns consumption with CORS using NEA HTML',async()=>{const original=globalThis.fetch;let upstreamCalls=0;globalThis.fetch=async(url,options)=>{upstreamCalls++;assert.match(String(url),/viewonline\/viewonlineresult\/$/);assert.equal(options.body.get('consumer_id'),input.consumerId);return new Response(fixture)};try{const r=await api(new Request('https://example.com/api/v1/readings',{method:'POST',headers:{'Content-Type':'application/json',Origin:'https://another-app.test'},body:JSON.stringify(input)}),{API_RATE_LIMITER:{limit:async()=>({success:true})}});assert.equal(r.status,200);assert.equal(r.headers.get('Cache-Control'),'no-store');assert.equal(r.headers.get('Access-Control-Allow-Origin'),'*');const j=await r.json();assert.equal(j.apiVersion,'1');assert.equal(j.summary.consumption.totalReportedUnits,11282);assert.equal(j.account.consumerId,input.consumerId);assert.equal(upstreamCalls,1)}finally{globalThis.fetch=original}});
 test('Public upstream failures return CORS-enabled 502 without claiming success',async()=>{const original=globalThis.fetch;globalThis.fetch=async()=>new Response('unavailable',{status:503});try{const r=await api(new Request('https://example.com/api/v1/readings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(input)}));assert.equal(r.status,502);assert.equal(r.headers.get('Access-Control-Allow-Origin'),'*');assert.equal((await r.json()).code,'NEA_LOOKUP_FAILED')}finally{globalThis.fetch=original}});
 test('Upstream tries the verified HTTPS alias for 522 using one shared deadline, but never retries access denials',async()=>{const original=globalThis.fetch;const calls=[];globalThis.fetch=async(url,options)=>{calls.push({url:String(url),signal:options.signal});return calls.length===1?new Response('timeout',{status:522}):new Response('NEA form')};try{const {upstream,SOURCE}=await import('./adapter.mjs');assert.equal(await upstream(SOURCE),'NEA form');assert.equal(calls[0].url,'https://neabilling.com/viewonline/');assert.equal(calls[1].url,'https://www.neabilling.com/viewonline/');assert.equal(calls[0].signal,calls[1].signal);let deniedCalls=0;globalThis.fetch=async()=>{deniedCalls++;return new Response('denied',{status:403})};await assert.rejects(upstream(SOURCE),/HTTP 403/);assert.equal(deniedCalls,1)}finally{globalThis.fetch=original}});
+const subtotal=(status,bill,payable,paid)=>row(['',status,'','TOTAL','',bill,'','',payable,paid,'','','']);
+const advanceRows=row(['4','PAY ADVANCE','ADVANCE','13-OCT-26','0','-1.4300','NO REBATE OR PENALTY','0','0','','','',''])+row(['5','PAY ADVANCE','PAID UPTO 2083-06','','0','0','NO REBATE OR PENALTY','0','0','','','','']);
+const multiSectionFixture=fixture.replace('</table>',subtotal('PAID','164557','161267','91431')+advanceRows+subtotal('PAY ADVANCE','-1.4300','0','')+'</table>');
+test('Multiple TOTAL rows reconcile separately; advance balances do not replace billing totals',()=>{const s=parseStatement(multiSectionFixture,input);assert.equal(s.records.length,5);assert.deepEqual(s.summary.totals,{billAmount:164557,payableAmount:161267,paidAmount:91431});assert.deepEqual(s.summary.sourceTotals,s.summary.totals);assert.equal(s.summary.statementGroups.length,2);assert.equal(s.summary.statementGroups[1].sourceTotals.billAmount,-1.43);assert.equal(s.summary.balanceRecords.length,2);assert.equal(s.summary.balanceRecords[0].kind,'balance');assert.equal(s.summary.consumption.totalReportedUnits,11282);assert.deepEqual(s.summary.sourceTotalMismatches,[])});
+test('Genuine mismatches in either billing or advance subtotals still reject the statement',()=>{assert.throws(()=>parseStatement(multiSectionFixture.replace('<td>164557</td>','<td>164558</td>'),input),/reconcile/);assert.throws(()=>parseStatement(multiSectionFixture.replace('13-OCT-26</td><td>0</td><td>-1.4300','13-OCT-26</td><td>0</td><td>-2.4300'),input),/reconcile/)});
+test('Four-decimal source amounts reconcile without premature per-row paisa rounding',()=>{const f='<table>'+detail+'<th>CONSUMED UNITS</th>'+row(['1','UNPAID','Ashwin/2083','05-OCT-26','1','10.0049','','0','10.0049','','','',''])+row(['2','UNPAID','VAT','','0','1.0001','','0','1.0001','','','',''])+subtotal('UNPAID','11.0050','11.0050','')+'</table>';const s=parseStatement(f,input);assert.equal(s.summary.totals.billAmount,11.005);assert.equal(s.summary.totals.payableAmount,11.005);assert.equal(s.summary.sourceTotals.paidAmount,null)});
+test('Empty valid statements and multiple paid/unpaid sections retain their control totals',()=>{const empty='<table>'+detail+'<th>CONSUMED UNITS</th>'+subtotal('PAID','0','0','0')+'</table>';assert.equal(parseStatement(empty,input).records.length,0);const f='<table>'+detail+'<th>CONSUMED UNITS</th>'+row(['1','PAID','Bhadra/2083','04-SEP-26','2','100','','0','100','','','',''])+row(['2','PAID','','','','0','','0','0','100','','',''])+subtotal('PAID','100','100','100')+row(['1','UNPAID','Ashwin/2083','05-OCT-26','3','50','PENALTY','10','55','','','',''])+subtotal('UNPAID','50','55','')+'</table>';const s=parseStatement(f,input);assert.deepEqual(s.summary.totals,{billAmount:150,payableAmount:155,paidAmount:100});assert.deepEqual(s.summary.sourceTotals,s.summary.totals);assert.equal(s.records[2].statementGroup,2)});
+test('Explicit paid receipt rows remain payments even under PAY ADVANCE status',()=>{const f='<table>'+detail+'<th>CONSUMED UNITS</th>'+row(['1','PAY ADVANCE','','','','0','','0','0','100','','',''])+subtotal('PAY ADVANCE','0','0','100')+'</table>';const s=parseStatement(f,input);assert.equal(s.records[0].kind,'payment');assert.equal(s.summary.totals.paidAmount,100);assert.equal(s.summary.balanceRecords.length,0)});
 ```

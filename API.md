@@ -57,9 +57,11 @@ The integration kit's `examples/frontend-client.mjs` accepts `{baseUrl: 'https:/
 
 ## Responses
 
+NEA can return several TOTAL rows, such as a PAID transaction subtotal followed by a PAY ADVANCE balance subtotal. The parser verifies each section separately. `records[].statementGroup` identifies the section; `kind: "balance"` and categories `advance` / `balance` identify informational rows. `summary.statementGroups` exposes original controls and calculated column totals; `summary.balanceRecords` preserves balance information outside billed/paid totals. `summary.sourceTotals` aggregates separately reported billing controls when available, rather than taking the final TOTAL row. Monetary reconciliation preserves four-decimal source precision.
+
 Successful lookup responses retain `account`, `records`, `summary`, `source`, `fetchedAt`, `range`, `readingAvailability` and `note`, and add `apiVersion: "1"` and `requestId`.
 
-`records` preserves the original NEA rows. `summary.months` provides monthly consumed units, base bill, recorded adjustment, VAT billed/payable and uniquely linked charges. `summary.consumption` reports known monthly consumption and missing-month coverage. Monetary values are NPR. Missing numbers are null; actual zeros remain zero. Account ID and SC number are checked against NEA's response, and financial row totals must reconcile with NEA's TOTAL row.
+`records` preserves the original NEA rows. `summary.months` provides monthly consumed units, base bill, recorded adjustment, VAT billed/payable and uniquely linked charges. `summary.consumption` reports known monthly consumption and missing-month coverage. Monetary values are NPR. Missing numbers are null; actual zeros remain zero. Account ID and SC number are checked against NEA's response, and source rows must reconcile with each matching NEA section's TOTAL row.
 
 Do not recompute VAT from a universal rate, count VAT rows as monthly consumption, count receipts as bills, subtract successive consumed-unit values as cumulative readings, or interpret a paid/payable discrepancy as an asserted account balance. NEA does not expose cumulative meter readings or the complete taxable base through this source.
 

@@ -416,7 +416,8 @@ export function apiSpecification(){return {
             "type": "string",
             "enum": [
               "bill",
-              "payment"
+              "payment",
+              "balance"
             ]
           },
           "category": {
@@ -426,11 +427,17 @@ export function apiSpecification(){return {
               "vat",
               "arrears",
               "receipt",
-              "other"
+              "other",
+              "advance",
+              "balance"
             ]
           },
           "status": {
             "type": "string"
+          },
+          "statementGroup": {
+            "type": "integer",
+            "description": "Section containing this original row; use with sequence to identify rows within a snapshot."
           }
         }
       },
@@ -565,6 +572,12 @@ export function apiSpecification(){return {
               "integer",
               "null"
             ]
+          },
+          "statementGroup": {
+            "type": [
+              "integer",
+              "null"
+            ]
           }
         }
       },
@@ -666,7 +679,8 @@ export function apiSpecification(){return {
                   {
                     "type": "null"
                   }
-                ]
+                ],
+                "description": "Aggregated reported controls for separate billing sections; null if no separate billing controls are supplied. Original section controls remain in statementGroups."
               },
               "paidDifference": {
                 "type": [
@@ -691,6 +705,18 @@ export function apiSpecification(){return {
                   "integer",
                   "null"
                 ]
+              },
+              "statementGroups": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/StatementGroup"
+                }
+              },
+              "balanceRecords": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Record"
+                }
               }
             }
           },
@@ -733,6 +759,48 @@ export function apiSpecification(){return {
           },
           "note": {
             "type": "string"
+          }
+        }
+      },
+      "StatementGroup": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "status": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "billing": {
+            "type": "boolean"
+          },
+          "recordSequences": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            }
+          },
+          "sourceTotals": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Totals"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "computedTotals": {
+            "$ref": "#/components/schemas/Totals"
+          },
+          "mismatches": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         }
       }

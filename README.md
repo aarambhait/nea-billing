@@ -70,7 +70,7 @@ The development-account statement started providing units in Shrawan/2083: 11,65
 
 ## Accounting behavior
 
-The importer preserves NEA's recorded VAT, rebate, penalty and payable amounts. It groups VAT/arrears only when transaction ID plus paid date identifies one monthly bill. Shared receipts are not allocated arbitrarily, and receipts are counted once. Parsed financial totals are checked against NEA's TOTAL row; a mismatch rejects the import.
+The importer preserves NEA's recorded VAT, rebate, penalty and payable amounts. It groups VAT/arrears only when transaction ID plus paid date identifies one monthly bill. Shared receipts are not allocated arbitrarily, and receipts are counted once. Each NEA section is reconciled against its own TOTAL row; a genuine mismatch rejects the import. Advance and balance rows remain visible separately and do not change billing/payment totals. Source money precision is preserved to four decimal places.
 
 The source exposes billed consumed units, not previous/current cumulative meter readings. The SC middle group is a reading-schedule cue; actual reading dates govern payment windows. The portal does not expose the taxable base or account category, so the app does not calculate a universal 13% VAT addition. Differences between paid and payable amounts are displayed without inventing credit or debt.
 
